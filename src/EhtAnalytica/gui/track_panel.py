@@ -7,12 +7,16 @@ import os
 # Add parent directory to path for imports
 if __name__ != "__main__":
     from ..ROIselector.video_processor import process_video_threaded
+    from ..ROIselector.ROI_manual import enable_roi_drawing
+    from ..tracker.tracking import process_tracking
 else:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(os.path.dirname(current_dir))
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
     from EhtAnalytica.ROIselector.video_processor import process_video_threaded
+    from EhtAnalytica.ROIselector.ROI_manual import enable_roi_drawing
+    from EhtAnalytica.tracker.tracking import process_tracking
 
 
 class TrackPanel(wx.Panel):
@@ -23,6 +27,14 @@ class TrackPanel(wx.Panel):
         self.current_first_frame = None
         self.progress_dialog = None
         self.output_folder_path = None
+        self.roi_canvas = None  # ROI drawing canvas
+        
+        # Track model and recording state
+        self.has_recording = False
+        self.has_roi_model = False
+        self.has_track_model = False
+        self.tracker_model = None  # Loaded tracker model instance
+        
         self.init_ui()
         
     def init_ui(self):
@@ -196,12 +208,17 @@ class TrackPanel(wx.Panel):
         except Exception as e:
             wx.MessageBox(f"Warning: Could not create output folder: {e}", "Warning", wx.OK | wx.ICON_WARNING)
         
-        # Enable auto_roi_btn and output_folder_btn
-        self.auto_roi_btn.Enable(True)
+        # Mark that recording is loaded
+        self.has_recording = True
+        
+        # Enable output_folder_btn
         self.output_folder_btn.Enable(True)
         
-        # Display first frame in canvas
-        self.display_frame(first_frame)
+        # Update button states based on model availability
+        self.update_button_states()
+        
+        # Enable ROI drawing on canvas
+        self.enable_roi_drawing()
         
         # Show video information dialog
         info_message = (
@@ -211,6 +228,7 @@ class TrackPanel(wx.Panel):
             f"Duration: {metadata['duration']:.2f} seconds\n"
             f"Resolution: {metadata['width']}x{metadata['height']}\n\n"
             f"Output folder created: {self.output_folder_path}\n\n"
+            f"You can now draw ROIs on the canvas by clicking and dragging.\n\n"
             f"Click OK to proceed."
         )
         
@@ -251,31 +269,294 @@ class TrackPanel(wx.Panel):
         self.display_canvas.Layout()
         self.display_canvas.Refresh()
     
+    def enable_roi_drawing(self):
+        """Enable ROI drawing on the display canvas."""
+        if self.current_first_frame is None or self.current_metadata is None:
+            return
+        
+        # Get original frame size
+        original_size = (self.current_metadata['width'], self.current_metadata['height'])
+        
+        # Get recording name from path
+        recording_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
+        
+        # Enable ROI drawing canvas
+        self.roi_canvas = enable_roi_drawing(
+            self.display_canvas, 
+            self.current_first_frame, 
+            original_size,
+            recording_name
+        )
+        
+        print("ROI drawing enabled. Click and drag to draw rectangles.")
+    
+    def get_rois(self):
+        """Get all drawn ROIs in pixel coordinates."""
+        if self.roi_canvas:
+            return self.roi_canvas.get_all_rois()
+        return []
+    
+    def update_button_states(self):
+        """Update button enabled/disabled states based on current state."""
+        # auto_roi_btn: enabled only if recording AND ROI model are loaded
+        self.auto_roi_btn.Enable(self.has_recording and self.has_roi_model)
+        
+        # track_btn: enabled only if recording AND track model are loaded
+        self.track_btn.Enable(self.has_recording and self.has_track_model)
+        
+        print(f"Button states updated - Recording: {self.has_recording}, "
+              f"ROI Model: {self.has_roi_model}, Track Model: {self.has_track_model}")
+    
     def on_select_roi_model(self, event):
         wildcard = "Model files (*.pth;*.pt;*.h5;*.onnx)|*.pth;*.pt;*.h5;*.onnx|All files (*.*)|*.*"
         dialog = wx.FileDialog(self, "Select ROI Model File", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
         if dialog.ShowModal() == wx.ID_OK:
             path = dialog.GetPath()
             self.roi_model_txt.SetLabel(path)
+            self.has_roi_model = True
             print(f"Selected ROI model: {path}")
+            
+            # Update button states
+            self.update_button_states()
         dialog.Destroy()
     
     def on_auto_roi(self, event):
         print("Auto ROI started")
+        
+        # Print current ROIs for debugging
+        rois = self.get_rois()
+        if rois:
+            print(f"Current ROIs ({len(rois)}):")
+            for roi in rois:
+                print(f"  {roi}")
+        else:
+            print("No ROIs defined yet")
+        
         # TODO: Implement auto ROI detection logic
     
     def on_select_track_model(self, event):
-        wildcard = "Model files (*.pth;*.pt;*.h5;*.onnx)|*.pth;*.pt;*.h5;*.onnx|All files (*.*)|*.*"
-        dialog = wx.FileDialog(self, "Select Track Model File", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        """Select a folder containing the track model."""
+        dialog = wx.DirDialog(self, "Select Track Model Folder", style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST)
         if dialog.ShowModal() == wx.ID_OK:
-            path = dialog.GetPath()
-            self.track_model_txt.SetLabel(path)
-            print(f"Selected track model: {path}")
+            model_dir = dialog.GetPath()
+            
+            # Show loading dialog and run in thread
+            loading_dialog = wx.ProgressDialog(
+                "Loading Track Model",
+                "Loading track model, please wait...",
+                maximum=100,
+                parent=self,
+                style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE
+            )
+            loading_dialog.Pulse()
+            
+            # Run model loading in a separate thread
+            import threading
+            
+            def load_thread():
+                try:
+                    self.load_track_model(model_dir)
+                finally:
+                    # Close loading dialog on main thread
+                    wx.CallAfter(loading_dialog.Destroy)
+            
+            thread = threading.Thread(target=load_thread)
+            thread.daemon = True
+            thread.start()
+            
         dialog.Destroy()
     
+    def load_track_model(self, model_dir):
+        """
+        Load the track model from a directory.
+        This function is called from a separate thread, so all GUI updates must use wx.CallAfter.
+        
+        Args:
+            model_dir: Directory containing the model .py file and .pth files
+        """
+        import glob
+        import sys
+        import importlib.util
+        
+        # Find all .py files in the directory
+        py_files = glob.glob(os.path.join(model_dir, "*.py"))
+        
+        # Filter out __init__.py and __pycache__ files
+        py_files = [f for f in py_files if not os.path.basename(f).startswith('__')]
+        
+        # Check that there is exactly one .py file
+        if len(py_files) == 0:
+            wx.CallAfter(
+                wx.MessageBox,
+                f"No Python (.py) file found in the selected directory:\n{model_dir}", 
+                "Error", 
+                wx.OK | wx.ICON_ERROR
+            )
+            return
+        elif len(py_files) > 1:
+            wx.CallAfter(
+                wx.MessageBox,
+                f"Multiple Python (.py) files found in the selected directory:\n{model_dir}\n\n"
+                f"Found: {', '.join([os.path.basename(f) for f in py_files])}\n\n"
+                f"Please ensure the directory contains only one model .py file.", 
+                "Error", 
+                wx.OK | wx.ICON_ERROR
+            )
+            return
+        
+        # Get the single .py file
+        model_file = py_files[0]
+        module_name = os.path.splitext(os.path.basename(model_file))[0]
+        
+        try:
+            # Load the module dynamically
+            spec = importlib.util.spec_from_file_location(module_name, model_file)
+            module = importlib.util.module_from_spec(spec)
+            
+            # Add to sys.modules to allow relative imports within the module
+            sys.modules[module_name] = module
+            
+            # Execute the module
+            spec.loader.exec_module(module)
+            
+            # Try to get TrackerModel class
+            if not hasattr(module, 'TrackerModel'):
+                wx.CallAfter(
+                    wx.MessageBox,
+                    f"The file '{os.path.basename(model_file)}' does not contain a 'TrackerModel' class.\n\n"
+                    f"Please ensure the model file defines a TrackerModel class.", 
+                    "Error", 
+                    wx.OK | wx.ICON_ERROR
+                )
+                return
+            
+            # Instantiate TrackerModel
+            TrackerModel = module.TrackerModel
+            self.tracker_model = TrackerModel(model_dir=model_dir)
+            
+            # Update state and GUI on main thread
+            def update_gui():
+                self.has_track_model = True
+                self.track_model_txt.SetLabel(f"{os.path.basename(model_file)}")
+                self.update_button_states()
+            
+            wx.CallAfter(update_gui)
+            
+            print(f"Successfully loaded track model from: {model_dir}")
+            print(f"Model file: {os.path.basename(model_file)}")
+            
+            # Show success message
+            wx.CallAfter(
+                wx.MessageBox,
+                f"Track model loaded successfully!\n\n"
+                f"Model: {os.path.basename(model_file)}\n"
+                f"Directory: {model_dir}", 
+                "Success", 
+                wx.OK | wx.ICON_INFORMATION
+            )
+            
+        except Exception as e:
+            # Report any errors during loading
+            error_msg = str(e)
+            wx.CallAfter(
+                wx.MessageBox,
+                f"Error loading track model from '{os.path.basename(model_file)}':\n\n{error_msg}", 
+                "Error", 
+                wx.OK | wx.ICON_ERROR
+            )
+            print(f"Error loading track model: {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
     def on_track(self, event):
-        print("Tracking started")
-        # TODO: Implement tracking logic
+        """Start tracking process."""
+        # Validate prerequisites
+        if not self.current_video_path or not os.path.exists(self.current_video_path):
+            wx.MessageBox("No video recording selected.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        
+        if not self.tracker_model:
+            wx.MessageBox("No track model loaded.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        
+        # Get ROIs
+        rois = self.get_rois()
+        if not rois:
+            wx.MessageBox("No ROIs defined. Please draw ROIs first.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        
+        if not self.output_folder_path or not os.path.exists(self.output_folder_path):
+            wx.MessageBox("Output folder does not exist.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        
+        print(f"Starting tracking with {len(rois)} ROI(s)...")
+        
+        # Get total frames for progress
+        cap = cv2.VideoCapture(self.current_video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        
+        # Create progress dialog
+        progress_dialog = wx.ProgressDialog(
+            "Tracking Progress",
+            "Starting tracking...",
+            maximum=total_frames,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME | wx.PD_REMAINING_TIME
+        )
+        
+        # Progress callback for updating dialog
+        def progress_callback(current_frame, total_frames, message):
+            wx.CallAfter(progress_dialog.Update, current_frame, message)
+        
+        # Run tracking in a separate thread
+        import threading
+        
+        def tracking_thread():
+            try:
+                result = process_tracking(
+                    video_path=self.current_video_path,
+                    rois=rois,
+                    tracker_model=self.tracker_model,
+                    output_folder=self.output_folder_path,
+                    progress_callback=progress_callback
+                )
+                
+                # Close progress dialog and show result
+                wx.CallAfter(progress_dialog.Destroy)
+                
+                if result['success']:
+                    wx.CallAfter(
+                        wx.MessageBox,
+                        result['message'],
+                        "Tracking Complete",
+                        wx.OK | wx.ICON_INFORMATION
+                    )
+                    print("Tracking completed successfully!")
+                else:
+                    wx.CallAfter(
+                        wx.MessageBox,
+                        result['message'],
+                        "Tracking Error",
+                        wx.OK | wx.ICON_ERROR
+                    )
+                    print(f"Tracking error: {result['message']}")
+                    
+            except Exception as e:
+                wx.CallAfter(progress_dialog.Destroy)
+                import traceback
+                error_msg = f"Unexpected error during tracking:\n{str(e)}\n\n{traceback.format_exc()}"
+                wx.CallAfter(
+                    wx.MessageBox,
+                    error_msg,
+                    "Error",
+                    wx.OK | wx.ICON_ERROR
+                )
+                print(error_msg)
+        
+        thread = threading.Thread(target=tracking_thread)
+        thread.daemon = True
+        thread.start()
     
     def on_open_output(self, event):
         """Open the output folder in file explorer."""

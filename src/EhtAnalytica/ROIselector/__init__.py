@@ -16,5 +16,6 @@ Example Usage
 """
 
 from .video_processor import VideoProcessor, process_video_threaded
+from .ROI_manual import ROIDrawCanvas, enable_roi_drawing, ROI
 
-__all__ = ['VideoProcessor', 'process_video_threaded']
+__all__ = ['VideoProcessor', 'process_video_threaded', 'ROIDrawCanvas', 'enable_roi_drawing', 'ROI']
