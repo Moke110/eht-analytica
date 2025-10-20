@@ -1,71 +1,92 @@
 """
-Test script for Track UNet V2 model using real test images.
+Test script for EHTTracker model using 16 random test images.
 """
 
 import os
-import sys
 import glob
 import random
-import numpy as np
-import pandas as pd
+import torch
 import cv2 as cv
 import matplotlib.pyplot as plt
-
-# Add model directory to path
-model_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'model', 'track_unet_v2'))
-sys.path.insert(0, model_dir)
-
-from track_unet_v2 import TrackerModel
 
 
 def load_test_sample(image_path):
     """
-    Load an image and its corresponding ground truth coordinates.
+    Load a test image and its ground truth coordinates.
     
     Args:
         image_path: Path to the image file
         
     Returns:
-        tuple: (image, ground_truth_coords)
+        image_tensor: Torch tensor [H, W] with pixel values in [0, 255]
+        gt_coords: Torch tensor [2] with ground truth coordinates, or None if not available
     """
-    # Load image
+    # Load image as grayscale
     image = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
+    if image is None:
+        print(f"Error: Could not load image {image_path}")
+        return None, None
     
-    # Load corresponding coordinates
-    coords_path = image_path.replace('.png', '_coords.csv')
-    coords_df = pd.read_csv(coords_path, header=None)
+    # Convert to torch tensor [H, W] with float32 dtype
+    image_tensor = torch.from_numpy(image).float()
     
-    # Convert to numeric, coercing errors to NaN
-    coords_df = coords_df.apply(pd.to_numeric, errors='coerce')
+    # Try to load corresponding CSV file with ground truth
+    csv_path = image_path.replace('.png', '.csv')
+    gt_coords = None
     
-    # Drop any rows with NaN values
-    coords_df = coords_df.dropna()
+    if os.path.exists(csv_path):
+        try:
+            # Read CSV file manually
+            with open(csv_path, 'r') as f:
+                lines = f.readlines()
+                if len(lines) > 1:  # Has header and at least one data row
+                    # Parse first coordinate pair (skip header)
+                    data_line = lines[1].strip()
+                    if data_line:
+                        parts = data_line.split(',')
+                        if len(parts) >= 2:
+                            try:
+                                x = float(parts[0])
+                                y = float(parts[1])
+                                gt_coords = torch.tensor([x, y], dtype=torch.float32)
+                            except (ValueError, IndexError):
+                                pass
+        except Exception as e:
+            print(f"Warning: Could not load ground truth from {csv_path}: {e}")
     
-    coords = coords_df.values.astype(np.float32)
-    
-    # Sort by x-coordinate
-    coords = coords[coords[:, 0].argsort()]
-    
-    # Only take the first 2 coordinates (in case there are more)
-    coords = coords[:2]
-    
-    return image, coords
+    return image_tensor, gt_coords
 
 
-def test_tracker_model():
-    """Test the tracker model with random images from the test set."""
+def test_eht_tracker():
+    """Test the EHTTracker model with 16 random images from the test set."""
     
     print("="*60)
-    print("Track UNet V2 - Test Script")
+    print("EHTTracker - Test Script")
     print("="*60)
     
-    # Initialize model
-    print("\nInitializing TrackerModel...")
+    # Model path
+    model_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), '..', '..', 'model', 'track_unet_v2', 'EHTTracker.pt'
+    ))
+    
+    # Load the EHTTracker model
+    print(f"\nLoading EHTTracker from: {model_path}")
+    if not os.path.exists(model_path):
+        print(f"Error: Model file not found at {model_path}")
+        return
+    
     try:
-        tracker = TrackerModel(model_dir=model_dir)
-    except ValueError as e:
-        print(f"Error: {e}")
-        print(f"\nPlease ensure .pth model files are in: {model_dir}")
+        tracker = torch.jit.load(model_path)
+        tracker.eval()
+        print("✓ Model loaded successfully!")
+        
+        # Get file size
+        file_size_mb = os.path.getsize(model_path) / (1024 * 1024)
+        print(f"Model file size: {file_size_mb:.2f} MB")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # Get test set directory
@@ -80,103 +101,163 @@ def test_tracker_model():
     
     print(f"Found {len(image_files)} images in test set")
     
-    # Select 4 random images
-    num_samples = min(4, len(image_files))
+    # Select 16 random images
+    num_samples = min(16, len(image_files))
     selected_images = random.sample(image_files, num_samples)
     
     print(f"\nTesting on {num_samples} random images:")
-    for img_path in selected_images:
-        print(f"  - {os.path.basename(img_path)}")
+    for i, img_path in enumerate(selected_images, 1):
+        print(f"  {i}. {os.path.basename(img_path)}")
     
     # Test each image
     results = []
-    for img_path in selected_images:
+    print("\n" + "="*60)
+    print("Running predictions...")
+    print("="*60)
+    
+    for idx, img_path in enumerate(selected_images, 1):
+        print(f"\n[{idx}/{num_samples}] Processing: {os.path.basename(img_path)}")
+        
         # Load image and ground truth
-        image, gt_coords = load_test_sample(img_path)
+        image_tensor, gt_coords = load_test_sample(img_path)
         
-        # Predict coordinates
-        pred_coords = tracker.predict(image, num_peaks=2)
+        if image_tensor is None:
+            print(f"  ✗ Failed to load image, skipping...")
+            continue
         
-        # Calculate error
-        errors = np.linalg.norm(pred_coords - gt_coords, axis=1)
+        print(f"  Image size: {image_tensor.shape}")
         
-        results.append({
-            'image_path': img_path,
-            'image': image,
-            'gt_coords': gt_coords,
-            'pred_coords': pred_coords,
-            'errors': errors
-        })
+        # Predict coordinates using EHTTracker
+        try:
+            with torch.no_grad():
+                pred_coords_all = tracker(image_tensor)  # Returns [num_peaks, 2]
+            
+            # Use first prediction
+            if pred_coords_all.shape[0] > 0:
+                pred_coords = pred_coords_all[0]  # [2]
+            else:
+                pred_coords = torch.zeros(2, dtype=torch.float32)
+            
+            print(f"  Predicted: ({pred_coords[0].item():.2f}, {pred_coords[1].item():.2f})")
+            
+            if gt_coords is not None:
+                # Calculate error
+                error = torch.sqrt(torch.sum((pred_coords - gt_coords) ** 2))
+                print(f"  Ground Truth: ({gt_coords[0].item():.2f}, {gt_coords[1].item():.2f})")
+                print(f"  Error: {error.item():.2f} pixels")
+                
+                results.append({
+                    'image': os.path.basename(img_path),
+                    'pred': pred_coords.cpu().numpy(),
+                    'gt': gt_coords.cpu().numpy(),
+                    'error': error.item(),
+                    'image_tensor': image_tensor
+                })
+            else:
+                print(f"  Ground Truth: Not available")
+                results.append({
+                    'image': os.path.basename(img_path),
+                    'pred': pred_coords.cpu().numpy(),
+                    'gt': None,
+                    'error': None,
+                    'image_tensor': image_tensor
+                })
+        except Exception as e:
+            print(f"  ✗ Prediction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
     
-    # Calculate overall statistics
-    all_errors = np.concatenate([r['errors'] for r in results])
-    mean_error = np.mean(all_errors)
-    std_error = np.std(all_errors)
-    max_error = np.max(all_errors)
-    min_error = np.min(all_errors)
+    # Calculate statistics for images with ground truth
+    valid_results = [r for r in results if r['error'] is not None]
     
-    print(f"\n{'='*60}")
-    print("Test Results:")
-    print(f"{'='*60}")
-    print(f"Mean error: {mean_error:.2f} ± {std_error:.2f} pixels")
-    print(f"Min error:  {min_error:.2f} pixels")
-    print(f"Max error:  {max_error:.2f} pixels")
-    
-    # Print individual results
-    print(f"\nIndividual Results:")
-    for i, result in enumerate(results):
-        img_name = os.path.basename(result['image_path'])
-        print(f"\n  Image {i+1}: {img_name}")
-        print(f"    Ground Truth: ({result['gt_coords'][0, 0]:.1f}, {result['gt_coords'][0, 1]:.1f}), "
-              f"({result['gt_coords'][1, 0]:.1f}, {result['gt_coords'][1, 1]:.1f})")
-        print(f"    Predicted:    ({result['pred_coords'][0, 0]:.1f}, {result['pred_coords'][0, 1]:.1f}), "
-              f"({result['pred_coords'][1, 0]:.1f}, {result['pred_coords'][1, 1]:.1f})")
-        print(f"    Errors:       {result['errors'][0]:.2f} px, {result['errors'][1]:.2f} px")
+    if valid_results:
+        print("\n" + "="*60)
+        print("Test Results Summary")
+        print("="*60)
+        
+        errors = [r['error'] for r in valid_results]
+        mean_error = sum(errors) / len(errors)
+        max_error = max(errors)
+        min_error = min(errors)
+        
+        print(f"\nTotal images tested: {num_samples}")
+        print(f"Images with ground truth: {len(valid_results)}")
+        print(f"\nError Statistics:")
+        print(f"  Mean Error:  {mean_error:.2f} pixels")
+        print(f"  Max Error:   {max_error:.2f} pixels")
+        print(f"  Min Error:   {min_error:.2f} pixels")
+        
+        # Sort by error for display
+        valid_results.sort(key=lambda x: x['error'])
+        
+        print(f"\nBest predictions:")
+        for i, r in enumerate(valid_results[:min(3, len(valid_results))], 1):
+            print(f"  {i}. {r['image']}: {r['error']:.2f} pixels")
+        
+        if len(valid_results) > 3:
+            print(f"\nWorst predictions:")
+            for i, r in enumerate(valid_results[-3:], 1):
+                print(f"  {i}. {r['image']}: {r['error']:.2f} pixels")
     
     # Visualize results
-    print(f"\n{'='*60}")
-    print("Generating visualization...")
-    
-    fig = plt.figure(figsize=(16, 4 * num_samples))
-    
-    for i, result in enumerate(results):
-        # Image with coordinates
-        ax1 = plt.subplot(num_samples, 2, i*2 + 1)
-        ax1.imshow(result['image'], cmap='gray')
-        ax1.scatter(result['gt_coords'][:, 0], result['gt_coords'][:, 1], 
-                   color='red', marker='x', s=200, linewidths=3, label='Ground Truth')
-        ax1.scatter(result['pred_coords'][:, 0], result['pred_coords'][:, 1], 
-                   color='blue', marker='x', s=200, linewidths=3, label='Predicted')
+    if results:
+        print("\n" + "="*60)
+        print("Generating visualization...")
+        print("="*60)
         
-        img_name = os.path.basename(result['image_path'])
-        ax1.set_title(f'{img_name}\nMean Error: {np.mean(result["errors"]):.2f} px')
-        ax1.legend(loc='upper right')
-        ax1.axis('off')
+        num_to_plot = min(16, len(results))
         
-        # Error bars
-        ax2 = plt.subplot(num_samples, 2, i*2 + 2)
-        bar_colors = ['#87CEEB', '#87CEEB']
-        ax2.bar(['Circle 1', 'Circle 2'], result['errors'], color=bar_colors, edgecolor='black')
-        ax2.axhline(y=np.mean(result['errors']), color='red', linestyle='--', 
-                   label=f'Mean: {np.mean(result["errors"]):.2f} px')
-        ax2.set_ylabel('Error (pixels)')
-        ax2.set_title(f'Prediction Errors')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+        # Create a 4x4 grid
+        fig, axes = plt.subplots(4, 4, figsize=(16, 16))
+        axes = axes.flatten()
+        
+        for i, result in enumerate(results[:num_to_plot]):
+            ax = axes[i]
+            
+            # Display image
+            image_np = result['image_tensor'].cpu().numpy()
+            ax.imshow(image_np, cmap='gray')
+            
+            # Plot predicted point
+            pred_x, pred_y = result['pred']
+            ax.plot(pred_x, pred_y, 'g+', markersize=15, markeredgewidth=2, label='Predicted')
+            
+            # Plot ground truth if available
+            if result['gt'] is not None:
+                gt_x, gt_y = result['gt']
+                ax.plot(gt_x, gt_y, 'r+', markersize=15, markeredgewidth=2, label='Ground Truth')
+                
+                # Draw line between pred and gt
+                ax.plot([pred_x, gt_x], [pred_y, gt_y], 'y--', linewidth=1, alpha=0.7)
+                
+                title = f"{result['image']}\nError: {result['error']:.2f}px"
+            else:
+                title = f"{result['image']}\n(No GT)"
+            
+            ax.set_title(title, fontsize=8)
+            ax.axis('off')
+            
+            if i == 0:
+                ax.legend(loc='upper right', fontsize=6)
+        
+        # Hide unused subplots
+        for i in range(num_to_plot, 16):
+            axes[i].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save figure
+        output_path = os.path.join(os.path.dirname(__file__), 'test_results_ehttracker.png')
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"\n✓ Visualization saved to: {output_path}")
+        
+        plt.show()
     
-    plt.tight_layout()
-    
-    # Save plot
-    output_path = os.path.join(os.path.dirname(__file__), 'track_model_test_results.png')
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"Visualization saved to: {output_path}")
-    
-    plt.show()
-    
-    print(f"\n{'='*60}")
+    print("\n" + "="*60)
     print("Test completed successfully!")
-    print(f"{'='*60}")
+    print("="*60)
 
 
-if __name__ == "__main__":
-    test_tracker_model()
+if __name__ == '__main__':
+    test_eht_tracker()

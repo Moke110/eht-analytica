@@ -68,7 +68,7 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Prepare output writers for each ROI
+    # Prepare output writers and dataframes for each ROI
     roi_data = {}
     for roi in rois:
         roi_name = roi['name']
@@ -80,9 +80,13 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter(output_video_path, fourcc, fps, (roi_width, roi_height))
         
+        # Create dataframe for this ROI (only timestamp and length)
+        df = pd.DataFrame(columns=['timestamp', 'length'])
+        
         roi_data[roi_name] = {
             'roi': roi,
             'writer': writer,
+            'dataframe': df,
             'video_path': output_video_path
         }
     
@@ -115,14 +119,31 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
                     x1, y1 = coords[0]
                     x2, y2 = coords[1]
                     
+                    # Calculate pixel distance (length)
+                    length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+                    
                     # Draw 'X' marks at the two coordinates
                     # First coordinate - Green X
                     draw_x_marker(roi_image, int(x1), int(y1), (0, 255, 0), size=10, thickness=2)
                     
                     # Second coordinate - Red X
                     draw_x_marker(roi_image, int(x2), int(y2), (0, 0, 255), size=10, thickness=2)
+                    
+                    # Add to dataframe (only timestamp and length)
+                    new_row = pd.DataFrame([{
+                        'timestamp': timestamp,
+                        'length': length
+                    }])
+                    data['dataframe'] = pd.concat([data['dataframe'], new_row], ignore_index=True)
+                else:
+                    # No valid prediction, add NaN for length
+                    new_row = pd.DataFrame([{
+                        'timestamp': timestamp,
+                        'length': np.nan
+                    }])
+                    data['dataframe'] = pd.concat([data['dataframe'], new_row], ignore_index=True)
                 
-                # Write frame to output video (even if no valid prediction)
+                # Write frame to output video
                 data['writer'].write(roi_image)
             
             # Update progress every 10 frames
@@ -135,12 +156,16 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
         if progress_callback:
             progress_callback(total_frames, total_frames, "Saving results...")
         
-        # Release video writers
+        # Release video writers and save dataframes
         for roi_name, data in roi_data.items():
             # Release video writer
             data['writer'].release()
             
-            print(f"Saved {roi_name}: {data['video_path']}")
+            # Save dataframe as CSV (only timestamp and length)
+            csv_path = os.path.join(output_folder, f"{roi_name}_tracked.csv")
+            data['dataframe'].to_csv(csv_path, index=False)
+            
+            print(f"Saved {roi_name}: {data['video_path']} and {csv_path}")
         
         return {
             'success': True, 

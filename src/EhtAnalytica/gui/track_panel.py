@@ -50,13 +50,13 @@ class TrackPanel(wx.Panel):
         sizer = wx.BoxSizer(wx.VERTICAL)
         
         # 1. recording_dir_txt: non-interactable text
-        self.recording_dir_txt = wx.StaticText(panel, label="No recording selected", size=(300, 80), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
+        self.recording_dir_txt = wx.StaticText(panel, label="No recording selected", size=wx.Size(300, 80), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
         self.recording_dir_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.recording_dir_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
         sizer.Add(self.recording_dir_txt, 0, wx.ALL | wx.EXPAND, 5)
         
         # 2. select_rec_btn: button
-        self.select_rec_btn = wx.Button(panel, label="Select Recording", size=(300, 60))
+        self.select_rec_btn = wx.Button(panel, label="Select Recording", size=wx.Size(300, 60))
         self.select_rec_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.select_rec_btn.Bind(wx.EVT_BUTTON, self.on_select_recording)
         sizer.Add(self.select_rec_btn, 0, wx.ALL | wx.EXPAND, 5)
@@ -64,7 +64,7 @@ class TrackPanel(wx.Panel):
         sizer.AddSpacer(20)
         
         # 4. roi_model_txt: non-interactable text
-        self.roi_model_txt = wx.StaticText(panel, label="No ROI model selected", size=(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
+        self.roi_model_txt = wx.StaticText(panel, label="No ROI model selected", size=wx.Size(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
         self.roi_model_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.roi_model_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
         sizer.Add(self.roi_model_txt, 0, wx.ALL | wx.EXPAND, 5)
@@ -73,13 +73,13 @@ class TrackPanel(wx.Panel):
         button_row_1 = wx.BoxSizer(wx.HORIZONTAL)
         
         # 5. select_roi_model_btn: button
-        self.select_roi_model_btn = wx.Button(panel, label="Select ROI model", size=(145, 60))
+        self.select_roi_model_btn = wx.Button(panel, label="Select ROI model", size=wx.Size(145, 60))
         self.select_roi_model_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.select_roi_model_btn.Bind(wx.EVT_BUTTON, self.on_select_roi_model)
         button_row_1.Add(self.select_roi_model_btn, 1, wx.ALL | wx.EXPAND, 5)
         
         # 6. auto_roi_btn: button
-        self.auto_roi_btn = wx.Button(panel, label="Auto ROI", size=(145, 60))
+        self.auto_roi_btn = wx.Button(panel, label="Auto ROI", size=wx.Size(145, 60))
         self.auto_roi_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.auto_roi_btn.Bind(wx.EVT_BUTTON, self.on_auto_roi)
         self.auto_roi_btn.Enable(False)  # Disabled initially
@@ -88,7 +88,7 @@ class TrackPanel(wx.Panel):
         sizer.Add(button_row_1, 0, wx.EXPAND)
         
         # 7. track_model_txt: non-interactable text
-        self.track_model_txt = wx.StaticText(panel, label="No track model selected", size=(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
+        self.track_model_txt = wx.StaticText(panel, label="No track model selected", size=wx.Size(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
         self.track_model_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.track_model_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
         sizer.Add(self.track_model_txt, 0, wx.ALL | wx.EXPAND, 5)
@@ -97,13 +97,13 @@ class TrackPanel(wx.Panel):
         button_row_2 = wx.BoxSizer(wx.HORIZONTAL)
         
         # 8. select_track_model_btn: button
-        self.select_track_model_btn = wx.Button(panel, label="Select track model", size=(145, 60))
+        self.select_track_model_btn = wx.Button(panel, label="Select track model", size=wx.Size(145, 60))
         self.select_track_model_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.select_track_model_btn.Bind(wx.EVT_BUTTON, self.on_select_track_model)
         button_row_2.Add(self.select_track_model_btn, 1, wx.ALL | wx.EXPAND, 5)
         
         # 9. track_btn: button
-        self.track_btn = wx.Button(panel, label="Track", size=(145, 60))
+        self.track_btn = wx.Button(panel, label="Track", size=wx.Size(145, 60))
         self.track_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.track_btn.Bind(wx.EVT_BUTTON, self.on_track)
         self.track_btn.Enable(False)  # Disabled initially
@@ -112,7 +112,7 @@ class TrackPanel(wx.Panel):
         sizer.Add(button_row_2, 0, wx.EXPAND)
         
         # 10. output_folder_btn: button
-        self.output_folder_btn = wx.Button(panel, label="Open Output Folder", size=(300, 60))
+        self.output_folder_btn = wx.Button(panel, label="Open Output Folder", size=wx.Size(300, 60))
         self.output_folder_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.output_folder_btn.Bind(wx.EVT_BUTTON, self.on_open_output)
         self.output_folder_btn.Enable(False)  # Disabled initially
@@ -258,10 +258,16 @@ class TrackPanel(wx.Panel):
         bitmap = wx.Bitmap(image)
         
         # Create static bitmap to display
-        if hasattr(self, 'frame_display'):
-            self.frame_display.SetBitmap(bitmap)
+        # For wxPython 4.2+, convert Bitmap to BitmapBundle
+        if hasattr(wx, 'BitmapBundle'):
+            bitmap_bundle: wx.BitmapBundle = wx.BitmapBundle.FromBitmap(bitmap)  # type: ignore
         else:
-            self.frame_display = wx.StaticBitmap(self.display_canvas, bitmap=bitmap)
+            bitmap_bundle: wx.BitmapBundle = bitmap  # type: ignore
+        
+        if hasattr(self, 'frame_display'):
+            self.frame_display.SetBitmap(bitmap_bundle)
+        else:
+            self.frame_display = wx.StaticBitmap(self.display_canvas, bitmap=bitmap_bundle)
             sizer = wx.BoxSizer(wx.VERTICAL)
             sizer.Add(self.frame_display, 1, wx.ALL | wx.ALIGN_CENTER, 5)
             self.display_canvas.SetSizer(sizer)
@@ -278,7 +284,10 @@ class TrackPanel(wx.Panel):
         original_size = (self.current_metadata['width'], self.current_metadata['height'])
         
         # Get recording name from path
-        recording_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
+        if self.current_video_path:
+            recording_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
+        else:
+            recording_name = "recording"
         
         # Enable ROI drawing canvas
         self.roi_canvas = enable_roi_drawing(
@@ -411,6 +420,9 @@ class TrackPanel(wx.Panel):
         try:
             # Load the module dynamically
             spec = importlib.util.spec_from_file_location(module_name, model_file)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Failed to load module spec from {model_file}")
+                
             module = importlib.util.module_from_spec(spec)
             
             # Add to sys.modules to allow relative imports within the module
