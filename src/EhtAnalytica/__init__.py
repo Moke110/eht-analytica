@@ -10,7 +10,7 @@ Basic Usage
 >>> import EhtAnalytica
 >>> print(EhtAnalytica.__version__)
 >>> # Access submodules
->>> from EhtAnalytica import analyzer, tracker, ROIselector
+>>> from EhtAnalytica import analyzer, selector_n_tracker
 """
 
 # Package metadata
@@ -37,16 +37,14 @@ if str(_package_path) not in sys.path:
 # Core module imports
 try:
     from . import analyzer
-    from . import tracker
-    from . import ROIselector
+    from . import selector_n_tracker
     from . import gui
     from . import main
 except ImportError as e:
     import warnings
     warnings.warn(f"Could not import all submodules: {e}", ImportWarning)
     analyzer = None
-    tracker = None
-    ROIselector = None
+    selector_n_tracker = None
     gui = None
     main = None
 
@@ -62,8 +60,7 @@ __all__ = [
     
     # Submodules
     "analyzer",
-    "tracker",
-    "ROIselector",
+    "selector_n_tracker",
     "gui",
     "main",
     
@@ -126,8 +123,7 @@ def get_info():
         },
         "modules": {
             "analyzer": analyzer is not None,
-            "tracker": tracker is not None,
-            "ROIselector": ROIselector is not None,
+            "selector_n_tracker": selector_n_tracker is not None,
             "gui": gui is not None,
             "main": main is not None,
         }

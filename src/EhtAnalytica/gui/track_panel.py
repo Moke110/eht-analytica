@@ -8,17 +8,17 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 if __name__ != "__main__":
-    from ..ROIselector.video_processor import process_video_threaded
-    from ..ROIselector.define_roi import enable_roi_drawing
-    from ..tracker.tracking import process_tracking
+    from ..selector_n_tracker.video_processor import process_video_threaded
+    from ..selector_n_tracker.define_roi import enable_roi_drawing
+    from ..selector_n_tracker.track import process_tracking
 else:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(os.path.dirname(current_dir))
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
-    from EhtAnalytica.ROIselector.video_processor import process_video_threaded
-    from EhtAnalytica.ROIselector.define_roi import enable_roi_drawing
-    from EhtAnalytica.tracker.tracking import process_tracking
+    from EhtAnalytica.selector_n_tracker.video_processor import process_video_threaded
+    from EhtAnalytica.selector_n_tracker.define_roi import enable_roi_drawing
+    from EhtAnalytica.selector_n_tracker.track import process_tracking
 
 
 class TrackPanel(wx.Panel):

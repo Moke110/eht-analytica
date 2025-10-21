@@ -111,6 +111,16 @@ class ROIDrawCanvas(wx.Panel):
         """
         super().__init__(parent)
         self.SetBackgroundColour(wx.WHITE)
+        try:
+            # Recommended for buffered painting
+            self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        except Exception:
+            pass
+        # Reduce flicker and improve paint performance
+        try:
+            self.SetDoubleBuffered(True)
+        except Exception:
+            pass
         
         self.frame = frame
         self.original_frame_size = original_frame_size
@@ -150,7 +160,14 @@ class ROIDrawCanvas(wx.Panel):
         
         # Scale to fit canvas
         canvas_size = self.GetSize()
-        if canvas_size.width > 0 and canvas_size.height > 0:
+        if canvas_size.width <= 1 or canvas_size.height <= 1:
+            # Canvas not laid out yet; try again after layout
+            self.frame = frame
+            try:
+                wx.CallAfter(self.set_frame, frame)
+            except Exception:
+                pass
+        else:
             scale = min(canvas_size.width / width, canvas_size.height / height)
             new_width = int(width * scale)
             new_height = int(height * scale)
@@ -170,7 +187,15 @@ class ROIDrawCanvas(wx.Panel):
     
     def on_paint(self, event):
         """Paint the canvas with frame and ROIs."""
-        dc = wx.PaintDC(self)
+        # Buffered paint to avoid flicker
+        dc_cls = getattr(wx, 'AutoBufferedPaintDC', wx.BufferedPaintDC)
+        dc = dc_cls(self)
+        # Ensure clear uses our background colour
+        try:
+            dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+        except Exception:
+            pass
+        dc.Clear()
         
         if self.bitmap:
             # Center the bitmap
@@ -260,7 +285,8 @@ class ROIDrawCanvas(wx.Panel):
         control_sizer.Add(text_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         
         # Delete button
-        delete_btn = wx.Button(control_panel, label="7", size=wx.Size(25, 25))
+        # Use a clear delete label (multiplication sign)
+        delete_btn = wx.Button(control_panel, label="\u00D7", size=wx.Size(25, 25))
         delete_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         delete_btn.Bind(wx.EVT_BUTTON, lambda evt, idx=roi_index: self.delete_roi(idx))
         control_sizer.Add(delete_btn, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -398,3 +424,17 @@ def enable_roi_drawing(parent_panel, frame, original_frame_size, recording_name=
     sizer = wx.BoxSizer(wx.VERTICAL)
     sizer.Add(roi_canvas, 1, wx.EXPAND)
     parent_panel.SetSizer(sizer)
+    # Force layout and refresh so the canvas gets a real size before first paint
+    try:
+        parent_panel.Layout()
+        if parent_panel.GetParent() is not None:
+            parent_panel.GetParent().Layout()
+        parent_panel.Refresh()
+    except Exception:
+        pass
+    # Re-apply frame after layout to ensure correct scaling
+    try:
+        wx.CallAfter(roi_canvas.set_frame, frame)
+    except Exception:
+        pass
+    return roi_canvas
