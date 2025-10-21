@@ -250,33 +250,37 @@ class ROIDrawCanvas(wx.Panel):
         control_panel = wx.Panel(self)
         control_sizer = wx.BoxSizer(wx.HORIZONTAL)
         
-        # Text label with ROI name
-        text = wx.StaticText(control_panel, label=roi.name)
-        text.SetForegroundColour(roi.color)
-        text.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        control_sizer.Add(text, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        # Editable text control with ROI name
+        text_ctrl = wx.TextCtrl(control_panel, value=roi.name, style=wx.TE_PROCESS_ENTER)
+        text_ctrl.SetForegroundColour(roi.color)
+        text_ctrl.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        # Commit name on Enter or when focus is lost
+        text_ctrl.Bind(wx.EVT_TEXT_ENTER, lambda evt, idx=roi_index: self._on_roi_name_enter(evt, idx))
+        text_ctrl.Bind(wx.EVT_KILL_FOCUS, lambda evt, idx=roi_index: self._on_roi_name_focus_lost(evt, idx))
+        control_sizer.Add(text_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         
         # Delete button
-        delete_btn = wx.Button(control_panel, label="×", size=(25, 25))
+        delete_btn = wx.Button(control_panel, label="7", size=wx.Size(25, 25))
         delete_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        delete_btn.Bind(wx.EVT_BUTTON, lambda evt: self.delete_roi(roi_index))
+        delete_btn.Bind(wx.EVT_BUTTON, lambda evt, idx=roi_index: self.delete_roi(idx))
         control_sizer.Add(delete_btn, 0, wx.ALIGN_CENTER_VERTICAL)
-        
+
         control_panel.SetSizer(control_sizer)
         control_panel.Fit()
-        
+
         # Position the control panel above the ROI
         rect = roi.rect
-        control_panel.SetPosition((rect.x, rect.y - 30))
-        
-        self.roi_controls.append((text, delete_btn, control_panel))
+        control_panel.SetPosition(wx.Point(rect.x, rect.y - 30))
+
+        # Store the text control, delete button and panel
+        self.roi_controls.append((text_ctrl, delete_btn, control_panel))
     
     def delete_roi(self, roi_index):
         """Delete an ROI and its controls."""
         if 0 <= roi_index < len(self.rois):
             # Remove controls
             if roi_index < len(self.roi_controls):
-                text, btn, panel = self.roi_controls[roi_index]
+                text_ctrl, btn, panel = self.roi_controls[roi_index]
                 panel.Destroy()
                 self.roi_controls.pop(roi_index)
             
@@ -287,9 +291,14 @@ class ROIDrawCanvas(wx.Panel):
             # Update control indices for remaining ROIs
             for i in range(roi_index, len(self.rois)):
                 if i < len(self.roi_controls):
-                    text, btn, panel = self.roi_controls[i]
+                    text_ctrl, btn, panel = self.roi_controls[i]
                     btn.Unbind(wx.EVT_BUTTON)
                     btn.Bind(wx.EVT_BUTTON, lambda evt, idx=i: self.delete_roi(idx))
+                    # Rebind name events to correct index
+                    text_ctrl.Unbind(wx.EVT_TEXT_ENTER)
+                    text_ctrl.Unbind(wx.EVT_KILL_FOCUS)
+                    text_ctrl.Bind(wx.EVT_TEXT_ENTER, lambda evt, idx=i: self._on_roi_name_enter(evt, idx))
+                    text_ctrl.Bind(wx.EVT_KILL_FOCUS, lambda evt, idx=i: self._on_roi_name_focus_lost(evt, idx))
             
             self.Refresh()
     
@@ -308,6 +317,53 @@ class ROIDrawCanvas(wx.Panel):
         
         self.rois.clear()
         self.roi_controls.clear()
+        self.Refresh()
+
+    # --- ROI name editing handlers ---
+    def _on_roi_name_enter(self, event, roi_index):
+        """Handle Enter key in ROI name edit control."""
+        try:
+            self._commit_roi_name(roi_index)
+        finally:
+            event.Skip()
+
+    def _on_roi_name_focus_lost(self, event, roi_index):
+        """Handle focus lost for ROI name edit control."""
+        try:
+            self._commit_roi_name(roi_index)
+        finally:
+            event.Skip()
+
+    def _commit_roi_name(self, roi_index):
+        """Validate and commit ROI name change from control to ROI object."""
+        if not (0 <= roi_index < len(self.rois)):
+            return
+
+        # Get control and new name
+        try:
+            text_ctrl, _, _ = self.roi_controls[roi_index]
+            new_name = text_ctrl.GetValue().strip()
+        except Exception:
+            return
+
+        if not new_name:
+            wx.MessageBox("ROI name cannot be empty.", "Invalid Name", wx.OK | wx.ICON_WARNING)
+            # revert to previous name
+            text_ctrl.SetValue(self.rois[roi_index].name)
+            return
+
+        # Check for duplicates
+        for i, roi in enumerate(self.rois):
+            if i != roi_index and roi.name == new_name:
+                wx.MessageBox("ROI name already exists. Choose a different name.", "Duplicate Name", wx.OK | wx.ICON_WARNING)
+                text_ctrl.SetValue(self.rois[roi_index].name)
+                return
+
+        # Commit new name
+        old_name = self.rois[roi_index].name
+        self.rois[roi_index].name = new_name
+        print(f"Renamed ROI '{old_name}' -> '{new_name}'")
+        # Refresh canvas to redraw any labels
         self.Refresh()
 
 
@@ -342,6 +398,3 @@ def enable_roi_drawing(parent_panel, frame, original_frame_size, recording_name=
     sizer = wx.BoxSizer(wx.VERTICAL)
     sizer.Add(roi_canvas, 1, wx.EXPAND)
     parent_panel.SetSizer(sizer)
-    parent_panel.Layout()
-    
-    return roi_canvas

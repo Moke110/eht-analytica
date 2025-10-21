@@ -3,11 +3,13 @@ import cv2
 import numpy as np
 import sys
 import os
+import json
+from pathlib import Path
 
 # Add parent directory to path for imports
 if __name__ != "__main__":
     from ..ROIselector.video_processor import process_video_threaded
-    from ..ROIselector.ROI_manual import enable_roi_drawing
+    from ..ROIselector.define_roi import enable_roi_drawing
     from ..tracker.tracking import process_tracking
 else:
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,7 +17,7 @@ else:
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
     from EhtAnalytica.ROIselector.video_processor import process_video_threaded
-    from EhtAnalytica.ROIselector.ROI_manual import enable_roi_drawing
+    from EhtAnalytica.ROIselector.define_roi import enable_roi_drawing
     from EhtAnalytica.tracker.tracking import process_tracking
 
 
@@ -36,6 +38,11 @@ class TrackPanel(wx.Panel):
         self.tracker_model = None  # Loaded tracker model instance
         
         self.init_ui()
+        # Attempt to load previously saved track model (non-blocking)
+        try:
+            self._load_saved_track_model_async()
+        except Exception:
+            pass
         
     def init_ui(self):
         main_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -195,6 +202,11 @@ class TrackPanel(wx.Panel):
         self.current_metadata = metadata
         self.current_first_frame = first_frame
         self.current_video_path = metadata['path']
+        # Update displayed recording label to reflect the (possibly fixed) file
+        try:
+            self.recording_dir_txt.SetLabel(self.current_video_path)
+        except Exception:
+            pass
         
         # Create output folder
         video_path = metadata['path']
@@ -344,11 +356,12 @@ class TrackPanel(wx.Panel):
         # TODO: Implement auto ROI detection logic
     
     def on_select_track_model(self, event):
-        """Select a folder containing the track model."""
-        dialog = wx.DirDialog(self, "Select Track Model Folder", style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST)
+        """Select a TorchScript .pt file containing the track model."""
+        wildcard = "TorchScript model (*.pt)|*.pt|All files (*.*)|*.*"
+        dialog = wx.FileDialog(self, "Select Track Model (.pt)", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
         if dialog.ShowModal() == wx.ID_OK:
-            model_dir = dialog.GetPath()
-            
+            model_file = dialog.GetPath()
+
             # Show loading dialog and run in thread
             loading_dialog = wx.ProgressDialog(
                 "Loading Track Model",
@@ -358,127 +371,126 @@ class TrackPanel(wx.Panel):
                 style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE
             )
             loading_dialog.Pulse()
-            
+
             # Run model loading in a separate thread
             import threading
-            
+
             def load_thread():
                 try:
-                    self.load_track_model(model_dir)
+                    self.load_track_model_pt(model_file)
                 finally:
-                    # Close loading dialog on main thread
                     wx.CallAfter(loading_dialog.Destroy)
-            
+
             thread = threading.Thread(target=load_thread)
             thread.daemon = True
             thread.start()
-            
+
         dialog.Destroy()
-    
-    def load_track_model(self, model_dir):
-        """
-        Load the track model from a directory.
-        This function is called from a separate thread, so all GUI updates must use wx.CallAfter.
-        
-        Args:
-            model_dir: Directory containing the model .py file and .pth files
-        """
-        import glob
-        import sys
-        import importlib.util
-        
-        # Find all .py files in the directory
-        py_files = glob.glob(os.path.join(model_dir, "*.py"))
-        
-        # Filter out __init__.py and __pycache__ files
-        py_files = [f for f in py_files if not os.path.basename(f).startswith('__')]
-        
-        # Check that there is exactly one .py file
-        if len(py_files) == 0:
-            wx.CallAfter(
-                wx.MessageBox,
-                f"No Python (.py) file found in the selected directory:\n{model_dir}", 
-                "Error", 
-                wx.OK | wx.ICON_ERROR
-            )
-            return
-        elif len(py_files) > 1:
-            wx.CallAfter(
-                wx.MessageBox,
-                f"Multiple Python (.py) files found in the selected directory:\n{model_dir}\n\n"
-                f"Found: {', '.join([os.path.basename(f) for f in py_files])}\n\n"
-                f"Please ensure the directory contains only one model .py file.", 
-                "Error", 
-                wx.OK | wx.ICON_ERROR
-            )
-            return
-        
-        # Get the single .py file
-        model_file = py_files[0]
-        module_name = os.path.splitext(os.path.basename(model_file))[0]
-        
+
+    def load_track_model_pt(self, model_file):
+        """Load a TorchScript .pt model file and set as tracker_model."""
         try:
-            # Load the module dynamically
-            spec = importlib.util.spec_from_file_location(module_name, model_file)
-            if spec is None or spec.loader is None:
-                raise ImportError(f"Failed to load module spec from {model_file}")
-                
-            module = importlib.util.module_from_spec(spec)
-            
-            # Add to sys.modules to allow relative imports within the module
-            sys.modules[module_name] = module
-            
-            # Execute the module
-            spec.loader.exec_module(module)
-            
-            # Try to get TrackerModel class
-            if not hasattr(module, 'TrackerModel'):
-                wx.CallAfter(
-                    wx.MessageBox,
-                    f"The file '{os.path.basename(model_file)}' does not contain a 'TrackerModel' class.\n\n"
-                    f"Please ensure the model file defines a TrackerModel class.", 
-                    "Error", 
-                    wx.OK | wx.ICON_ERROR
-                )
+            # Lazy import torch
+            try:
+                import torch
+            except Exception as e:
+                wx.CallAfter(wx.MessageBox, f"Torch not available: {e}", "Error", wx.OK | wx.ICON_ERROR)
                 return
-            
-            # Instantiate TrackerModel
-            TrackerModel = module.TrackerModel
-            self.tracker_model = TrackerModel(model_dir=model_dir)
-            
-            # Update state and GUI on main thread
+
+            # Load scripted model
+            model = torch.jit.load(model_file, map_location='cpu')
+            model.eval()
+            self.tracker_model = model
+
             def update_gui():
                 self.has_track_model = True
-                self.track_model_txt.SetLabel(f"{os.path.basename(model_file)}")
+                self.track_model_txt.SetLabel(os.path.basename(model_file))
                 self.update_button_states()
-            
+
             wx.CallAfter(update_gui)
-            
-            print(f"Successfully loaded track model from: {model_dir}")
-            print(f"Model file: {os.path.basename(model_file)}")
-            
-            # Show success message
-            wx.CallAfter(
-                wx.MessageBox,
-                f"Track model loaded successfully!\n\n"
-                f"Model: {os.path.basename(model_file)}\n"
-                f"Directory: {model_dir}", 
-                "Success", 
-                wx.OK | wx.ICON_INFORMATION
-            )
-            
+
+            # Do not show a blocking success message box so the user can continue interacting.
+            print(f"Loaded TorchScript model: {model_file}")
+            # Persist selected model path
+            try:
+                self._save_track_model_path(model_file)
+            except Exception:
+                pass
+
         except Exception as e:
-            # Report any errors during loading
             error_msg = str(e)
-            wx.CallAfter(
-                wx.MessageBox,
-                f"Error loading track model from '{os.path.basename(model_file)}':\n\n{error_msg}", 
-                "Error", 
-                wx.OK | wx.ICON_ERROR
-            )
-            print(f"Error loading track model: {error_msg}")
+            wx.CallAfter(wx.MessageBox, f"Error loading TorchScript model: {error_msg}", "Error", wx.OK | wx.ICON_ERROR)
+            print(f"Error loading TorchScript model: {error_msg}")
             import traceback
             traceback.print_exc()
+
+    # --- model path persistence helpers ---
+    def _config_file_path(self):
+        """Return path to config/model_path.json in the repo root; create folder if needed."""
+        try:
+            repo_root = Path(__file__).resolve().parents[3]
+        except Exception:
+            repo_root = Path.cwd()
+        config_dir = repo_root / 'config'
+        os.makedirs(str(config_dir), exist_ok=True)
+        return str(config_dir / 'model_path.json')
+
+    def _save_track_model_path(self, model_path):
+        """Save the model_path to config/model_path.json as {'track_model': path}."""
+        cfg = {'track_model': model_path}
+        try:
+            cfg_path = self._config_file_path()
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, indent=2)
+            print(f"Saved track model path to config: {cfg_path}")
+        except Exception as e:
+            print(f"Warning: could not save model path: {e}")
+
+    def _load_saved_track_model_path(self):
+        """Return saved path or None if not present."""
+        try:
+            cfg_path = self._config_file_path()
+            if not os.path.exists(cfg_path):
+                return None
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            return cfg.get('track_model')
+        except Exception:
+            return None
+
+    def _load_saved_track_model_async(self):
+        """If a saved model path exists, attempt to load it in a background thread."""
+        saved = self._load_saved_track_model_path()
+        if not saved:
+            return
+
+        # Only proceed if the path exists on disk
+        if not os.path.exists(saved):
+            print(f"Saved track model path not found: {saved}")
+            return
+
+        import threading
+
+        def worker():
+            try:
+                # If it's a TorchScript file
+                if os.path.isfile(saved) and saved.lower().endswith('.pt'):
+                    self.load_track_model_pt(saved)
+                elif os.path.isdir(saved):
+                    # Look for a .pt inside the directory
+                    for entry in os.listdir(saved):
+                        if entry.lower().endswith('.pt'):
+                            candidate = os.path.join(saved, entry)
+                            self.load_track_model_pt(candidate)
+                            return
+                    print(f"No .pt model found in saved directory: {saved}")
+                else:
+                    print(f"Unsupported saved model path type: {saved}")
+            except Exception as e:
+                print(f"Error loading saved track model: {e}")
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
     
     def on_track(self, event):
         """Start tracking process."""

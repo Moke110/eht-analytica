@@ -1,5 +1,0 @@
-# GUI Dependencies for EHT Analytica
-# Install with: pip install -r requirements-gui.txt
-
-# wxPython - Cross-platform GUI toolkit
-wxPython>=4.2.0
