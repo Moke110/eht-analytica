@@ -33,7 +33,6 @@ class TrackPanel(wx.Panel):
         
         # Track model and recording state
         self.has_recording = False
-        self.has_roi_model = False
         self.has_track_model = False
         self.tracker_model = None  # Loaded tracker model instance
         
@@ -68,55 +67,31 @@ class TrackPanel(wx.Panel):
         self.select_rec_btn.Bind(wx.EVT_BUTTON, self.on_select_recording)
         sizer.Add(self.select_rec_btn, 0, wx.ALL | wx.EXPAND, 5)
         
-        sizer.AddSpacer(20)
-        
-        # 4. roi_model_txt: non-interactable text
-        self.roi_model_txt = wx.StaticText(panel, label="No ROI model selected", size=wx.Size(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
-        self.roi_model_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        self.roi_model_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
-        sizer.Add(self.roi_model_txt, 0, wx.ALL | wx.EXPAND, 5)
-        
-        # Row with buttons 5 and 6
-        button_row_1 = wx.BoxSizer(wx.HORIZONTAL)
-        
-        # 5. select_roi_model_btn: button
-        self.select_roi_model_btn = wx.Button(panel, label="Select ROI model", size=wx.Size(145, 60))
-        self.select_roi_model_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        self.select_roi_model_btn.Bind(wx.EVT_BUTTON, self.on_select_roi_model)
-        button_row_1.Add(self.select_roi_model_btn, 1, wx.ALL | wx.EXPAND, 5)
-        
-        # 6. auto_roi_btn: button
-        self.auto_roi_btn = wx.Button(panel, label="Auto ROI", size=wx.Size(145, 60))
-        self.auto_roi_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        self.auto_roi_btn.Bind(wx.EVT_BUTTON, self.on_auto_roi)
-        self.auto_roi_btn.Enable(False)  # Disabled initially
-        button_row_1.Add(self.auto_roi_btn, 1, wx.ALL | wx.EXPAND, 5)
-        
-        sizer.Add(button_row_1, 0, wx.EXPAND)
-        
-        # 7. track_model_txt: non-interactable text
-        self.track_model_txt = wx.StaticText(panel, label="No track model selected", size=wx.Size(300, 50), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
+        # Add a stretch spacer so controls below 'Select Recording' are
+        # anchored to the left-bottom of the left panel (per layout)
+        sizer.AddStretchSpacer(1)
+
+        # Row: track model label and Select tracker model button (each half width)
+        track_row = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.track_model_txt = wx.StaticText(panel, label="No track model selected", style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
         self.track_model_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.track_model_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
-        sizer.Add(self.track_model_txt, 0, wx.ALL | wx.EXPAND, 5)
-        
-        # Row with buttons 8 and 9
-        button_row_2 = wx.BoxSizer(wx.HORIZONTAL)
-        
-        # 8. select_track_model_btn: button
-        self.select_track_model_btn = wx.Button(panel, label="Select track model", size=wx.Size(145, 60))
+        track_row.Add(self.track_model_txt, 1, wx.ALL | wx.EXPAND, 5)
+
+        self.select_track_model_btn = wx.Button(panel, label="Select model", size=wx.Size(145, 60))
         self.select_track_model_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.select_track_model_btn.Bind(wx.EVT_BUTTON, self.on_select_track_model)
-        button_row_2.Add(self.select_track_model_btn, 1, wx.ALL | wx.EXPAND, 5)
-        
-        # 9. track_btn: button
-        self.track_btn = wx.Button(panel, label="Track", size=wx.Size(145, 60))
+        track_row.Add(self.select_track_model_btn, 1, wx.ALL | wx.EXPAND, 5)
+
+        sizer.Add(track_row, 0, wx.EXPAND)
+
+        # Full-width Track button below the small buttons
+        self.track_btn = wx.Button(panel, label="Track", size=wx.Size(300, 60))
         self.track_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.track_btn.Bind(wx.EVT_BUTTON, self.on_track)
         self.track_btn.Enable(False)  # Disabled initially
-        button_row_2.Add(self.track_btn, 1, wx.ALL | wx.EXPAND, 5)
-        
-        sizer.Add(button_row_2, 0, wx.EXPAND)
+        sizer.Add(self.track_btn, 0, wx.ALL | wx.EXPAND, 5)
         
         # 10. output_folder_btn: button
         self.output_folder_btn = wx.Button(panel, label="Open Output Folder", size=wx.Size(300, 60))
@@ -319,41 +294,12 @@ class TrackPanel(wx.Panel):
     
     def update_button_states(self):
         """Update button enabled/disabled states based on current state."""
-        # auto_roi_btn: enabled only if recording AND ROI model are loaded
-        self.auto_roi_btn.Enable(self.has_recording and self.has_roi_model)
-        
-        # track_btn: enabled only if recording AND track model are loaded
-        self.track_btn.Enable(self.has_recording and self.has_track_model)
-        
-        print(f"Button states updated - Recording: {self.has_recording}, "
-              f"ROI Model: {self.has_roi_model}, Track Model: {self.has_track_model}")
+        # track_btn: enabled only if recording AND track model are loaded AND at least one ROI is drawn
+        has_rois = len(self.get_rois()) > 0
+        self.track_btn.Enable(self.has_recording and self.has_track_model and has_rois)
+
+        print(f"Button states updated - Recording: {self.has_recording}, Track Model: {self.has_track_model}, ROIs: {has_rois}")
     
-    def on_select_roi_model(self, event):
-        wildcard = "Model files (*.pth;*.pt;*.h5;*.onnx)|*.pth;*.pt;*.h5;*.onnx|All files (*.*)|*.*"
-        dialog = wx.FileDialog(self, "Select ROI Model File", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
-        if dialog.ShowModal() == wx.ID_OK:
-            path = dialog.GetPath()
-            self.roi_model_txt.SetLabel(path)
-            self.has_roi_model = True
-            print(f"Selected ROI model: {path}")
-            
-            # Update button states
-            self.update_button_states()
-        dialog.Destroy()
-    
-    def on_auto_roi(self, event):
-        print("Auto ROI started")
-        
-        # Print current ROIs for debugging
-        rois = self.get_rois()
-        if rois:
-            print(f"Current ROIs ({len(rois)}):")
-            for roi in rois:
-                print(f"  {roi}")
-        else:
-            print("No ROIs defined yet")
-        
-        # TODO: Implement auto ROI detection logic
     
     def on_select_track_model(self, event):
         """Select a TorchScript .pt file containing the track model."""
@@ -397,10 +343,27 @@ class TrackPanel(wx.Panel):
                 wx.CallAfter(wx.MessageBox, f"Torch not available: {e}", "Error", wx.OK | wx.ICON_ERROR)
                 return
 
-            # Load scripted model
-            model = torch.jit.load(model_file, map_location='cpu')
+            # Load scripted model onto appropriate device (GPU if available)
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            try:
+                model = torch.jit.load(model_file, map_location=device)
+            except Exception:
+                # Fallback to CPU map_location if device map fails
+                model = torch.jit.load(model_file, map_location='cpu')
             model.eval()
+            try:
+                model.to(device)
+            except Exception:
+                # Some scripted models don't implement .to(); ignore
+                pass
+            # store model and its device for inference use
             self.tracker_model = model
+            try:
+                # Attach device attribute for downstream discovery
+                setattr(self.tracker_model, 'device', device)
+            except Exception:
+                pass
+            self.tracker_model_device = device
 
             def update_gui():
                 self.has_track_model = True
@@ -433,7 +396,7 @@ class TrackPanel(wx.Panel):
             repo_root = Path.cwd()
         config_dir = repo_root / 'config'
         os.makedirs(str(config_dir), exist_ok=True)
-        return str(config_dir / 'model_path.json')
+        return str(config_dir / 'track_model_path.json')
 
     def _save_track_model_path(self, model_path):
         """Save the model_path to config/model_path.json as {'track_model': path}."""

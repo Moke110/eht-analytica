@@ -142,17 +142,15 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
                 # Extract ROI from original frame
                 roi_image = frame[y:y+h, x:x+w].copy()
                 
-                # Get predictions from tracker model
-                coords = None
-
-                # Preferred API: tracker_model.predict(image) (existing Python wrapper)
                 try:
                     coords = tracker_model.forward(roi_image)
                 except Exception:
                     coords = None
 
                 # Fallback for TorchScript models: call the scripted model with a
-                # grayscale torch.Tensor [H, W] and convert output to numpy
+                # Fallback for TorchScript models: build grayscale torch.Tensor [H, W]
+                # and convert output to numpy. Robustly detect the model device
+                # (from parameters/buffers) and move the tensor there.
                 if coords is None and torch is not None:
                     try:
                         if len(roi_image.shape) == 3:
@@ -161,20 +159,68 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
                             gray = roi_image
 
                         tensor = torch.from_numpy(gray).float()
-                        with torch.no_grad():
-                            out = tracker_model(tensor)
 
+                        # Local alias to help static analysis
+                        torch_local = torch
+
+                        # Robust device detection for scripted or nn.Module models
+                        def _get_model_device(m):
+                            # Try attr first
+                            try:
+                                d = getattr(m, 'device', None)
+                                if d is not None:
+                                    return d
+                            except Exception:
+                                pass
+                            # Try parameters
+                            try:
+                                for p in m.parameters():
+                                    return p.device
+                            except Exception:
+                                pass
+                            # Try buffers
+                            try:
+                                for b in m.buffers():
+                                    return b.device
+                            except Exception:
+                                pass
+                            # Fallback
+                            # Prefer CUDA if available, otherwise CPU. Guard against
+                            # torch being None (though this branch is only entered
+                            # when torch is available).
+                            if torch_local is not None and hasattr(torch_local, 'cuda') and torch_local.cuda.is_available():
+                                return torch_local.device('cuda')
+                            return torch_local.device('cpu') if torch_local is not None else None
+
+                        model_device = _get_model_device(tracker_model)
+
+                        # Move tensor to model device (no-op if already same)
+                        tensor = tensor.to(model_device)
+
+                        with torch.no_grad():
+                            # The scripted tracker expects a 2D [H, W] tensor.
+                            # Some older saved modules may expect [1,1,H,W]; try both.
+                            out = None
+                            try:
+                                out = tracker_model(tensor)
+                            except Exception:
+                                t2 = tensor.unsqueeze(0).unsqueeze(0)
+                                out = tracker_model(t2)
+
+                        # Unwrap output if needed and convert to numpy
                         if isinstance(out, (list, tuple)):
                             out = out[0]
 
-                        # try to convert to numpy
                         if isinstance(out, np.ndarray):
                             coords = out
                         else:
                             try:
                                 coords = out.detach().cpu().numpy()
                             except Exception:
-                                coords = np.array(out)
+                                try:
+                                    coords = np.array(out)
+                                except Exception:
+                                    coords = None
                     except Exception:
                         coords = None
                 
