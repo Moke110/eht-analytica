@@ -1,5 +1,6 @@
 import wx
 import numpy as np
+from typing import Optional, Callable
 
 
 class ROI:
@@ -128,6 +129,9 @@ class ROIDrawCanvas(wx.Panel):
         self.bitmap = None
         self.rois = []  # List of ROI objects
         self.roi_controls = []  # List of (text_ctrl, delete_btn) tuples
+        # Optional callback invoked when ROI list changes (e.g., add/delete/clear)
+        # Signature: callback(count: int) -> None
+        self.on_rois_changed: Optional[Callable[[int], None]] = None
         
         # Drawing state
         self.drawing = False
@@ -268,6 +272,8 @@ class ROIDrawCanvas(wx.Panel):
         
         print(f"Created {name}: Canvas {rect}, Pixel {roi.pixel_rect}")
         print(f"  Pixel coordinates: {roi.get_pixel_coordinates()}")
+        # Notify listeners of ROI count change
+        self._notify_rois_changed()
     
     def create_roi_controls(self, roi, roi_index):
         """Create text label and delete button for an ROI."""
@@ -327,6 +333,8 @@ class ROIDrawCanvas(wx.Panel):
                     text_ctrl.Bind(wx.EVT_KILL_FOCUS, lambda evt, idx=i: self._on_roi_name_focus_lost(evt, idx))
             
             self.Refresh()
+            # Notify listeners of ROI count change
+            self._notify_rois_changed()
     
     def _get_next_color(self):
         """Get the next color for a new ROI."""
@@ -344,6 +352,16 @@ class ROIDrawCanvas(wx.Panel):
         self.rois.clear()
         self.roi_controls.clear()
         self.Refresh()
+        # Notify listeners of ROI count change
+        self._notify_rois_changed()
+
+    def _notify_rois_changed(self):
+        """Invoke ROI changed callback with current ROI count, if set."""
+        try:
+            if callable(self.on_rois_changed):
+                self.on_rois_changed(len(self.rois))
+        except Exception:
+            pass
 
     # --- ROI name editing handlers ---
     def _on_roi_name_enter(self, event, roi_index):

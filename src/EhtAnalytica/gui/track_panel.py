@@ -9,16 +9,16 @@ from pathlib import Path
 # Add parent directory to path for imports
 if __name__ != "__main__":
     from ..selector_n_tracker.video_processor import process_video_threaded
-    from ..selector_n_tracker.define_roi import enable_roi_drawing
-    from ..selector_n_tracker.track import process_tracking
+    from ..selector_n_tracker.roi_selector import enable_roi_drawing
+    from ..selector_n_tracker.tracker import process_tracking
 else:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(os.path.dirname(current_dir))
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
     from EhtAnalytica.selector_n_tracker.video_processor import process_video_threaded
-    from EhtAnalytica.selector_n_tracker.define_roi import enable_roi_drawing
-    from EhtAnalytica.selector_n_tracker.track import process_tracking
+    from EhtAnalytica.selector_n_tracker.roi_selector import enable_roi_drawing
+    from EhtAnalytica.selector_n_tracker.tracker import process_tracking
 
 
 class TrackPanel(wx.Panel):
@@ -59,17 +59,17 @@ class TrackPanel(wx.Panel):
         self.recording_dir_txt = wx.StaticText(panel, label="No recording selected", size=wx.Size(300, 80), style=wx.ALIGN_CENTER_VERTICAL | wx.ST_NO_AUTORESIZE)
         self.recording_dir_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.recording_dir_txt.SetBackgroundColour(wx.Colour(240, 240, 240))
-        sizer.Add(self.recording_dir_txt, 0, wx.ALL | wx.EXPAND, 5)
+        sizer.Add(self.recording_dir_txt, 2, wx.ALL | wx.EXPAND, 5)
         
         # 2. select_rec_btn: button
         self.select_rec_btn = wx.Button(panel, label="Select Recording", size=wx.Size(300, 60))
         self.select_rec_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.select_rec_btn.Bind(wx.EVT_BUTTON, self.on_select_recording)
-        sizer.Add(self.select_rec_btn, 0, wx.ALL | wx.EXPAND, 5)
+        sizer.Add(self.select_rec_btn, 2, wx.ALL | wx.EXPAND, 5)
         
         # Add a stretch spacer so controls below 'Select Recording' are
         # anchored to the left-bottom of the left panel (per layout)
-        sizer.AddStretchSpacer(1)
+        sizer.AddStretchSpacer(15)
 
         # Row: track model label and Select tracker model button (each half width)
         track_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -84,23 +84,33 @@ class TrackPanel(wx.Panel):
         self.select_track_model_btn.Bind(wx.EVT_BUTTON, self.on_select_track_model)
         track_row.Add(self.select_track_model_btn, 1, wx.ALL | wx.EXPAND, 5)
 
-        sizer.Add(track_row, 0, wx.EXPAND)
+        sizer.Add(track_row, 2, wx.EXPAND)
 
-        # Full-width Track button below the small buttons
+        # Status text for video processing state (above Track button)
+        self.video_process_txt = wx.StaticText(panel, label="video not selected", style=wx.ALIGN_CENTER)
+        self.video_process_txt.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        self.video_process_txt.SetForegroundColour(wx.Colour(100, 100, 100))
+        sizer.Add(self.video_process_txt, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 5)
+
+        # Timer for animated preprocessing status
+        self._video_status_timer = wx.Timer(self)
+        self._video_status_base = "video pre-processing"
+        self._video_status_dots = 0
+        self.Bind(wx.EVT_TIMER, self._on_video_status_timer, self._video_status_timer)
+
+        # Full-width Track button below the status text
         self.track_btn = wx.Button(panel, label="Track", size=wx.Size(300, 60))
         self.track_btn.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.track_btn.Bind(wx.EVT_BUTTON, self.on_track)
         self.track_btn.Enable(False)  # Disabled initially
-        sizer.Add(self.track_btn, 0, wx.ALL | wx.EXPAND, 5)
+        sizer.Add(self.track_btn, 2, wx.ALL | wx.EXPAND, 5)
         
         # 10. output_folder_btn: button
         self.output_folder_btn = wx.Button(panel, label="Open Output Folder", size=wx.Size(300, 60))
         self.output_folder_btn.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         self.output_folder_btn.Bind(wx.EVT_BUTTON, self.on_open_output)
         self.output_folder_btn.Enable(False)  # Disabled initially
-        sizer.Add(self.output_folder_btn, 0, wx.ALL | wx.EXPAND, 5)
-        
-        sizer.AddStretchSpacer(1)
+        sizer.Add(self.output_folder_btn, 2, wx.ALL | wx.EXPAND, 5)
         
         panel.SetSizer(sizer)
         return panel
@@ -124,55 +134,145 @@ class TrackPanel(wx.Panel):
         dialog = wx.FileDialog(self, "Select Recording File", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
         if dialog.ShowModal() == wx.ID_OK:
             path = dialog.GetPath()
+            # Clear previous video's buffers and UI remnants (keep loaded model)
+            try:
+                self._clear_video_buffers()
+            except Exception:
+                pass
             self.recording_dir_txt.SetLabel(path)
             print(f"Selected recording: {path}")
+            
+            # Immediately display first frame and enable ROI selection, while processing runs in background
+            try:
+                cap = cv2.VideoCapture(path)
+                ret, first_frame = cap.read()
+                if ret and first_frame is not None:
+                    height, width = first_frame.shape[:2]
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    duration = (frame_count / fps) if fps and fps > 0 else 0
+                    # Store minimal metadata; will be overwritten after full processing
+                    self.current_first_frame = first_frame
+                    self.current_metadata = {
+                        'path': path,
+                        'fps': fps,
+                        'frame_count': frame_count,
+                        'width': width,
+                        'height': height,
+                        'duration': duration
+                    }
+                    self.current_video_path = path
+                    # Show on canvas and allow drawing right away
+                    self.enable_roi_drawing()
+            except Exception:
+                pass
+            finally:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
             
             # Start processing video in background thread
             self.process_video(path)
         dialog.Destroy()
+
+    def _clear_video_buffers(self):
+        """Clear all in-memory buffers/state related to the previously selected video.
+        Does NOT clear any loaded track model."""
+        # Clear preprocessed frame buffer and counts
+        try:
+            self.frame_buffer = []
+        except Exception:
+            pass
+        try:
+            self.valid_frame_count = 0
+        except Exception:
+            pass
+
+        # Clear current video/frame metadata
+        self.current_first_frame = None
+        self.current_metadata = None
+        self.current_video_path = None
+        self.has_recording = False
+
+        # Clear output folder reference and disable button until new video processed
+        self.output_folder_path = None
+        try:
+            self.output_folder_btn.Enable(False)
+        except Exception:
+            pass
+
+        # Clear ROI canvas content and any display children to free memory
+        try:
+            rc = getattr(self, 'roi_canvas', None)
+            if rc is not None and hasattr(rc, 'clear_rois'):
+                rc.clear_rois()
+        except Exception:
+            pass
+        try:
+            for child in self.display_canvas.GetChildren():
+                child.Destroy()
+            self.display_canvas.Refresh()
+        except Exception:
+            pass
+
+        # Update track button state (likely disabled)
+        try:
+            self.update_track_btn_state()
+        except Exception:
+            pass
     
     def process_video(self, video_path):
-        """Process video in background thread with progress dialog."""
-        # Show progress dialog
-        self.progress_dialog = wx.ProgressDialog(
-            "Importing Recording",
-            "Initializing...",
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE
-        )
-        
+        """Process video in a background thread without blocking UI."""
+        # Reset recording-ready flag until preprocessing completes
+        try:
+            self.has_recording = False
+            self.update_track_btn_state()
+        except Exception:
+            pass
+        # Start animated status during preprocessing
+        try:
+            self._start_preprocessing_animation()
+        except Exception:
+            pass
+
         def progress_callback(percent, message):
-            """Update progress dialog from worker thread."""
-            wx.CallAfter(self._update_progress, percent, message)
-        
-        def completion_callback(metadata, first_frame, error=None):
+            # Status loop already animates; no heavy UI work here
+            return
+
+        def completion_callback(metadata, first_frame, error=None, frame_buffer=None, valid_count=0):
             """Handle completion from worker thread."""
-            wx.CallAfter(self._on_video_processed, metadata, first_frame, error)
-        
+            wx.CallAfter(self._on_video_processed, metadata, first_frame, error, frame_buffer, valid_count)
+
         # Start processing in background thread
         process_video_threaded(video_path, progress_callback, completion_callback)
     
     def _update_progress(self, percent, message):
-        """Update progress dialog (called from main thread)."""
-        if self.progress_dialog:
-            self.progress_dialog.Update(int(percent), message)
+        """Legacy progress handler no longer used (kept for compatibility)."""
+        pass
     
-    def _on_video_processed(self, metadata, first_frame, error=None):
+    def _on_video_processed(self, metadata, first_frame, error=None, frame_buffer=None, valid_count=0):
         """Handle video processing completion (called from main thread)."""
-        # Close progress dialog
-        if self.progress_dialog:
-            self.progress_dialog.Destroy()
-            self.progress_dialog = None
-        
         if error:
             wx.MessageBox(f"Error processing video: {error}", "Error", wx.OK | wx.ICON_ERROR)
+            self._stop_preprocessing_animation(final_text="video not selected")
             return
         
         if metadata is None or first_frame is None:
             wx.MessageBox("Failed to process video", "Error", wx.OK | wx.ICON_ERROR)
+            self._stop_preprocessing_animation(final_text="video not selected")
             return
         
+        # Store frame buffer and valid frame count for later use
+        try:
+            self.frame_buffer = frame_buffer or []
+        except Exception:
+            self.frame_buffer = []
+        try:
+            self.valid_frame_count = int(valid_count) if valid_count else len(self.frame_buffer)
+        except Exception:
+            self.valid_frame_count = len(self.frame_buffer)
+
         # Store metadata and first frame
         self.current_metadata = metadata
         self.current_first_frame = first_frame
@@ -201,25 +301,41 @@ class TrackPanel(wx.Panel):
         # Enable output_folder_btn
         self.output_folder_btn.Enable(True)
         
-        # Update button states based on model availability
-        self.update_button_states()
+        # Update Track button availability based on current state
+        self.update_track_btn_state()
         
-        # Enable ROI drawing on canvas
-        self.enable_roi_drawing()
-        
-        # Show video information dialog
-        info_message = (
-            f"Video Information:\n\n"
-            f"Framerate: {metadata['fps']:.2f} fps\n"
-            f"Total Frames: {metadata['frame_count']}\n"
-            f"Duration: {metadata['duration']:.2f} seconds\n"
-            f"Resolution: {metadata['width']}x{metadata['height']}\n\n"
-            f"Output folder created: {self.output_folder_path}\n\n"
-            f"You can now draw ROIs on the canvas by clicking and dragging.\n\n"
-            f"Click OK to proceed."
-        )
-        
-        wx.MessageBox(info_message, "Video Information", wx.OK | wx.ICON_INFORMATION)
+        # Do NOT recreate ROI canvas here to keep existing ROIs.
+        # Update status: ready to track (stop animation)
+        self._stop_preprocessing_animation(final_text="ready to track")
+
+    # --- Animated video preprocessing status helpers ---
+    def _start_preprocessing_animation(self, base_text: str = "video pre-processing", interval_ms: int = 500):
+        try:
+            self._video_status_base = base_text
+            self._video_status_dots = 0
+            self.video_process_txt.SetLabel(f"{self._video_status_base} .")
+            if self._video_status_timer.IsRunning():
+                self._video_status_timer.Stop()
+            self._video_status_timer.Start(interval_ms)
+        except Exception:
+            pass
+
+    def _stop_preprocessing_animation(self, final_text: str = "ready to track"):
+        try:
+            if self._video_status_timer.IsRunning():
+                self._video_status_timer.Stop()
+            if final_text:
+                self.video_process_txt.SetLabel(final_text)
+        except Exception:
+            pass
+
+    def _on_video_status_timer(self, evt):
+        try:
+            self._video_status_dots = (self._video_status_dots + 1) % 3
+            dots = "." * (self._video_status_dots + 1)
+            self.video_process_txt.SetLabel(f"{self._video_status_base} {dots}")
+        except Exception:
+            pass
     
     def display_frame(self, frame):
         """Display a frame in the canvas."""
@@ -283,6 +399,14 @@ class TrackPanel(wx.Panel):
             original_size,
             recording_name
         )
+
+        # React to ROI list changes to update Track button state
+        try:
+            self.roi_canvas.on_rois_changed = lambda *_args, **_kwargs: self.update_track_btn_state()
+        except Exception:
+            pass
+        # Update track button once after (re)creating canvas
+        self.update_track_btn_state()
         
         print("ROI drawing enabled. Click and drag to draw rectangles.")
     
@@ -292,13 +416,16 @@ class TrackPanel(wx.Panel):
             return self.roi_canvas.get_all_rois()
         return []
     
-    def update_button_states(self):
-        """Update button enabled/disabled states based on current state."""
-        # track_btn: enabled only if recording AND track model are loaded AND at least one ROI is drawn
+    def update_track_btn_state(self):
+        """Enable Track button only when: model loaded, video preprocessed, and at least one ROI exists."""
         has_rois = len(self.get_rois()) > 0
-        self.track_btn.Enable(self.has_recording and self.has_track_model and has_rois)
+        should_enable = bool(self.has_recording and self.has_track_model and has_rois)
+        try:
+            self.track_btn.Enable(should_enable)
+        except Exception:
+            pass
 
-        print(f"Button states updated - Recording: {self.has_recording}, Track Model: {self.has_track_model}, ROIs: {has_rois}")
+        print(f"Track button state -> enable={should_enable} | recording={self.has_recording}, model={self.has_track_model}, rois={has_rois}")
     
     
     def on_select_track_model(self, event):
@@ -368,7 +495,7 @@ class TrackPanel(wx.Panel):
             def update_gui():
                 self.has_track_model = True
                 self.track_model_txt.SetLabel(os.path.basename(model_file))
-                self.update_button_states()
+                self.update_track_btn_state()
 
             wx.CallAfter(update_gui)
 
@@ -478,10 +605,12 @@ class TrackPanel(wx.Panel):
         
         print(f"Starting tracking with {len(rois)} ROI(s)...")
         
-        # Get total frames for progress
-        cap = cv2.VideoCapture(self.current_video_path)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
+        # Use valid frame count from preprocessing for progress bar if available
+        total_frames = getattr(self, 'valid_frame_count', None)
+        if not isinstance(total_frames, int) or total_frames <= 0:
+            cap = cv2.VideoCapture(self.current_video_path)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
         
         # Create progress dialog
         progress_dialog = wx.ProgressDialog(
@@ -506,7 +635,9 @@ class TrackPanel(wx.Panel):
                     rois=rois,
                     tracker_model=self.tracker_model,
                     output_folder=self.output_folder_path,
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    total_frames_hint=total_frames,
+                    frame_buffer=getattr(self, 'frame_buffer', None)
                 )
                 
                 # Close progress dialog and show result

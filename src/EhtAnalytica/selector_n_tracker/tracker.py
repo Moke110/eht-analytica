@@ -64,7 +64,7 @@ def draw_x_marker(image, x, y, color, size=10, thickness=2):
     cv2.line(image, (x - size, y + size), (x + size, y - size), color, thickness)
 
 
-def process_tracking(video_path, rois, tracker_model, output_folder, progress_callback=None):
+def process_tracking(video_path, rois, tracker_model, output_folder, progress_callback=None, total_frames_hint: int | None = None, frame_buffer: list | None = None):
     """
     Process video tracking for each ROI.
     
@@ -90,14 +90,20 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
     if not rois:
         return {'success': False, 'message': 'No ROIs defined. Please draw ROIs first.'}
     
-    # Open video
+    # Open video to query properties (fps); when frame_buffer is provided, we
+    # won't read frames from cap, only use metadata.
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return {'success': False, 'message': f'Could not open video: {video_path}'}
-    
+
     # Get video properties
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # If using preprocessed buffer of valid frames, progress should reflect that length
+    if isinstance(frame_buffer, list) and len(frame_buffer) > 0:
+        progress_total = len(frame_buffer)
+    else:
+        progress_total = total_frames_hint if (isinstance(total_frames_hint, int) and total_frames_hint > 0) else total_frames
     
     # Prepare output writers and dataframes for each ROI
     roi_data = {}
@@ -124,15 +130,41 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
     
     # Process each frame
     frame_idx = 0
-    
+
     try:
+        # If a preprocessed buffer is provided, use it (each entry: (frame_bgr, timestamp_seconds))
+        if isinstance(frame_buffer, list) and len(frame_buffer) > 0:
+            # Create an explicit iterator to satisfy static checkers
+            frame_iter = iter(frame_buffer)
+            use_cap_read = False
+        else:
+            frame_iter = None
+            use_cap_read = True
+
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            # Calculate timestamp (in seconds)
-            timestamp = frame_idx / fps
+            if use_cap_read:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # Use real timestamp reported by capture in seconds
+                try:
+                    timestamp = float(cap.get(cv2.CAP_PROP_POS_MSEC)) / 1000.0
+                except Exception:
+                    # Fallback to frame index based timestamp if CAP_PROP_POS_MSEC unsupported
+                    timestamp = (frame_idx / fps) if fps and fps > 0 else float('nan')
+            else:
+                try:
+                    item = next(frame_iter)  # type: ignore[arg-type]
+                except StopIteration:
+                    break
+                # Expect item as (frame, timestamp_seconds)
+                try:
+                    frame, timestamp = item
+                except Exception:
+                    # If shape doesn't match, skip
+                    frame, timestamp = None, None
+                if frame is None:
+                    break
             
             # Process each ROI
             for roi_name, data in roi_data.items():
@@ -240,17 +272,21 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
                     draw_x_marker(roi_image, int(x2), int(y2), (0, 0, 255), size=10, thickness=2)
                     
                     # Add to dataframe (only timestamp and length)
-                    new_row = pd.DataFrame([{
-                        'timestamp': timestamp,
-                        'length': length
-                    }])
+                    new_row = pd.DataFrame([
+                        {
+                            'timestamp': timestamp,
+                            'length': length
+                        }
+                    ])
                     data['dataframe'] = pd.concat([data['dataframe'], new_row], ignore_index=True)
                 else:
                     # No valid prediction, add NaN for length
-                    new_row = pd.DataFrame([{
-                        'timestamp': timestamp,
-                        'length': np.nan
-                    }])
+                    new_row = pd.DataFrame([
+                        {
+                            'timestamp': timestamp,
+                            'length': np.nan
+                        }
+                    ])
                     data['dataframe'] = pd.concat([data['dataframe'], new_row], ignore_index=True)
                 
                 # Write frame to output video
@@ -258,13 +294,13 @@ def process_tracking(video_path, rois, tracker_model, output_folder, progress_ca
             
             # Update progress every 10 frames
             if progress_callback and frame_idx % 10 == 0:
-                progress_callback(frame_idx, total_frames, f"Processing frame {frame_idx}/{total_frames}")
+                progress_callback(frame_idx, progress_total, f"Processing frame {frame_idx}/{progress_total}")
             
             frame_idx += 1
         
         # Final progress update
         if progress_callback:
-            progress_callback(total_frames, total_frames, "Saving results...")
+            progress_callback(progress_total, progress_total, "Saving results...")
         
         # Release video writers and save dataframes
         for roi_name, data in roi_data.items():

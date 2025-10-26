@@ -13,6 +13,8 @@ class VideoProcessor:
         self.metadata = {}
         self.valid_frames = []
         self.frame_timestamps = []
+        # Buffer of tuples: (frame ndarray (BGR), timestamp_seconds: float)
+        self.frame_buffer = []
         
     def get_video_metadata(self, video_path):
         """
@@ -67,7 +69,8 @@ class VideoProcessor:
             raise ValueError(f"Cannot open video file: {video_path}")
         
         valid_frames = []
-        timestamps = []
+        timestamps = []  # in ms
+        frames_buffer = []  # list of (frame, timestamp_seconds)
         frame_idx = 0
         
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -80,7 +83,13 @@ class VideoProcessor:
             
             if frame is not None and frame.size > 0:
                 valid_frames.append(frame_idx)
-                timestamps.append(cap.get(cv2.CAP_PROP_POS_MSEC))
+                ts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                timestamps.append(ts_ms)
+                # store frame copy with timestamp in seconds
+                try:
+                    frames_buffer.append((frame.copy(), float(ts_ms) / 1000.0))
+                except Exception:
+                    frames_buffer.append((frame, float(ts_ms) / 1000.0))
             
             frame_idx += 1
             
@@ -89,160 +98,11 @@ class VideoProcessor:
                 progress_callback(progress)
         
         cap.release()
+        # cache buffer for downstream use
+        self.frame_buffer = frames_buffer
         return valid_frames, timestamps
     
-    def fix_video_frames(self, video_path, metadata, valid_frames, timestamps=None, output_path=None):
-        """
-        Fix video by filling missing frames if scan result doesn't match metadata.
-        
-        Parameters
-        ----------
-        video_path : str
-            Path to the original video file
-        metadata : dict
-            Video metadata
-        valid_frames : list
-            List of valid frame indices from scan
-        output_path : str, optional
-            Path for output video (if None, overwrites original)
-            
-        Returns
-        -------
-        str
-            Path to the fixed video file
-        """
-        expected_frames = metadata['frame_count']
-        actual_frames = len(valid_frames)
-        
-        # If frames match, no fix needed
-        if expected_frames == actual_frames:
-            return video_path
-        
-        # Prepare output path
-        if output_path is None:
-            path_obj = Path(video_path)
-            temp_path = path_obj.parent / f"{path_obj.stem}_fixed{path_obj.suffix}"
-            output_path = str(temp_path)
-
-        cap = cv2.VideoCapture(video_path)
-
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video file: {video_path}")
-
-        # Get video properties
-        fps = metadata['fps']
-        width = metadata['width']
-        height = metadata['height']
-
-        # Create video writer (robust getattr to avoid static analysis issues)
-        vfunc = getattr(cv2, 'VideoWriter_fourcc', None)
-        if vfunc is not None:
-            try:
-                fourcc = vfunc(*'mp4v')
-            except Exception:
-                fourcc = 0
-        else:
-            fourcc = 0
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-        # If timestamps weren't provided, try to use stored frame_timestamps
-        if timestamps is None:
-            timestamps = getattr(self, 'frame_timestamps', None)
-
-        # If we have readable timestamps, build mapping from target frames -> nearest readable frame
-        if timestamps and len(timestamps) > 0 and fps and fps > 0:
-            # timestamps are in ms
-            time_per_frame = 1000.0 / fps
-            # Build list of readable frame timestamps (aligned with valid_frames)
-            readable_timestamps = list(timestamps)
-            readable_frames = list(valid_frames)
-
-            # Preload readable frames into memory to avoid repeated seeks
-            loaded_frames = []
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            read_map = {fidx: None for fidx in readable_frames}
-            next_read_idx = 0
-            total_readable = len(readable_frames)
-            # Read sequentially and save frames whose indices are in readable_frames
-            current_frame_idx = 0
-            while next_read_idx < total_readable:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                if current_frame_idx == readable_frames[next_read_idx]:
-                    loaded_frames.append(frame.copy())
-                    next_read_idx += 1
-                current_frame_idx += 1
-
-            # If we couldn't preload correctly (counts mismatch), fallback to reading by timestamp
-            if len(loaded_frames) != total_readable:
-                # Rebuild loaded_frames by seeking to each readable timestamp
-                loaded_frames = []
-                for ts in readable_timestamps:
-                    cap.set(cv2.CAP_PROP_POS_MSEC, float(ts))
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        loaded_frames.append(frame.copy())
-                    else:
-                        # if seek/read fails, append a black frame
-                        loaded_frames.append(np.zeros((height, width, 3), dtype=np.uint8))
-
-            # Build mapping for every target frame to index in loaded_frames
-            mapping = []
-            for target_idx in range(expected_frames):
-                target_ts = target_idx * time_per_frame
-                # binary search for closest readable timestamp
-                import bisect
-                pos = bisect.bisect_left(readable_timestamps, target_ts)
-                # choose closest between pos-1 and pos
-                candidates = []
-                if pos > 0:
-                    candidates.append(pos - 1)
-                if pos < len(readable_timestamps):
-                    candidates.append(pos)
-                best = candidates[0] if candidates else 0
-                best_diff = abs(readable_timestamps[best] - target_ts) if candidates else float('inf')
-                for c in candidates:
-                    diff = abs(readable_timestamps[c] - target_ts)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best = c
-                mapping.append(best)
-
-            # Write frames according to mapping
-            for m in mapping:
-                frame_to_write = loaded_frames[m]
-                out.write(frame_to_write)
-
-        else:
-            # Fallback behavior: replicate last valid frame strategy
-            frame_idx = 0
-            last_valid_frame = None
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            for expected_idx in range(expected_frames):
-                if expected_idx in valid_frames:
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        out.write(frame)
-                        last_valid_frame = frame
-                        frame_idx += 1
-                else:
-                    if last_valid_frame is not None:
-                        out.write(last_valid_frame)
-                    else:
-                        black_frame = np.zeros((height, width, 3), dtype=np.uint8)
-                        out.write(black_frame)
-        
-        cap.release()
-        out.release()
-        
-        # Keep the fixed file as a separate file (do not overwrite the original).
-        # Return the path to the fixed file so callers can update selection if desired.
-        try:
-            print(f"Fixed video saved to: {output_path}")
-        except Exception:
-            pass
-        return output_path
+    # Removed video fixing; processing only scans frames and timestamps in original video.
     
     def process_video(self, video_path, progress_callback=None, completion_callback=None):
         """
@@ -277,16 +137,7 @@ class VideoProcessor:
             self.valid_frames = valid_frames
             self.frame_timestamps = timestamps
             
-            # Step 3: Fix video if needed
-            if len(valid_frames) != metadata['frame_count']:
-                if progress_callback:
-                    progress_callback(80, "Fixing video frames...")
-                
-                video_path = self.fix_video_frames(video_path, metadata, valid_frames, timestamps=timestamps)
-                
-                # Re-scan to update metadata
-                metadata = self.get_video_metadata(video_path)
-                self.metadata = metadata
+            # Step 3: No fixing; keep original video. Continue to first frame.
             
             # Get first frame
             if progress_callback:
@@ -302,13 +153,13 @@ class VideoProcessor:
             if progress_callback:
                 progress_callback(100, "Complete!")
             
-            # Call completion callback
+            # Call completion callback (pass frame buffer and valid frame count)
             if completion_callback:
-                completion_callback(metadata, first_frame)
+                completion_callback(metadata, first_frame, None, self.frame_buffer, len(valid_frames))
         
         except Exception as e:
             if completion_callback:
-                completion_callback(None, None, error=str(e))
+                completion_callback(None, None, error=str(e), frame_buffer=None, valid_count=0)
 
 
 def process_video_threaded(video_path, progress_callback=None, completion_callback=None):
@@ -322,7 +173,7 @@ def process_video_threaded(video_path, progress_callback=None, completion_callba
     progress_callback : callable, optional
         Callback to report progress (percent, message)
     completion_callback : callable, optional
-        Callback when complete (metadata, first_frame, error=None)
+        Callback when complete (metadata, first_frame, error=None, frame_buffer=list, valid_count=int)
         
     Returns
     -------
@@ -338,3 +189,6 @@ def process_video_threaded(video_path, progress_callback=None, completion_callba
     thread.start()
     
     return thread
+
+
+ 
