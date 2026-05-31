@@ -1,0 +1,19 @@
+[project]
+name = "EHT_Analytica"
+version = "0.2.0"
+description = "A deep learning EHT contraction analysis tool"
+authors = [{ name = "Chang Wang", email = "changwangbj02@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    "numpy",
+    "pandas",
+    "opencv-python",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx", "pyinstaller>=6.0"]
+desktop = ["pywebview>=5.0"]

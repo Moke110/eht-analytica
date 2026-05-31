@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
+
+# Build artifacts
+build/dist/
+
+# Config (user-specific)
+config/app_config.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
