@@ -1,104 +1,232 @@
 # EHT Analytica
 
-## 项目概述
+## Project Overview
 
-EHT Analytica 利用深度学习模型（U-Net Ensemble ×5）自动识别、追踪 EHT (Engineered Heart Tissue) pillars 并计算下游收缩-舒张指标。
+Deep learning (U-Net) system for automatic recognition, tracking of EHT (Engineered Heart Tissue) pillars and calculation of contraction-relaxation metrics.
+EHT is an in-vitro myocardial tissue assembled from PDMS pillars + cardiomyocytes + fibrin, capable of autonomous contraction-relaxation.
 
-**EHT 背景**: PDMS 支柱 + 心肌细胞 + 纤维蛋白组装成的体外心肌组织，具有自主收缩-舒张功能。通过追踪支柱位移计算收缩力、频率、T80 等关键功能指标。
+**Tech Stack**: Python (FastAPI) backend + Vue 3 (Vite) frontend + PyTorch GPU inference
 
-**技术栈**: Python (FastAPI) 后端 + Vue 3 (Vite) 前端。
-
-## 快速启动
+## Quick Start
 
 ```bash
-# 双击 dev.bat，或手动在两个终端中分别运行：
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 9876 --reload
+# First time setup
+uv sync
+# Double-click dev.bat, or manually:
+uv run uvicorn backend.main:app --host 127.0.0.1 --port 9876 --reload
 cd frontend && npm run dev
-# 浏览器打开 http://localhost:5173
+# Open http://localhost:5173
 ```
 
-## 项目结构
+## Coding Rules
+
+- No Chinese (or any non-English) text in project files. All comments, docstrings, labels, and documentation must be written in English.
+
+## Project Structure
 
 ```
 EHT_Analytica/
-├── backend/                    # FastAPI 后端
-│   ├── main.py                 # 应用入口 + 静态文件托管
-│   ├── api/                    # API 路由
-│   │   ├── track.py            # /api/track/* — 视频、模型、追踪
-│   │   ├── analyze.py          # /api/analyze/* — CSV 分析与保存
-│   │   └── system.py           # /api/system/* — 健康检查、文件对话框、设备信息
-│   ├── models/schemas.py       # Pydantic 请求/响应模型
-│   ├── services/               # 业务逻辑层
-│   │   ├── video_service.py    # 视频会话管理
-│   │   ├── tracking_service.py # 模型加载 (GPU/CPU) + 追踪执行
-│   │   ├── analysis_service.py # 分析流水线
-│   │   └── task_manager.py     # 任务生命周期 + SSE 进度推送
-│   └── utils/config.py         # 持久化配置 (模型路径、文件历史)
-├── frontend/                   # Vue 3 前端 (Vite)
-│   ├── src/
-│   │   ├── App.vue             # 根组件，Tab 切换 Track/Analyze，自动加载模型
-│   │   ├── components/
-│   │   │   ├── track/          # TrackPanel, Sidebar (DEVICE), VideoCanvas, Progress
-│   │   │   ├── analyze/        # AnalyzePanel, CsvList, Progress
-│   │   │   └── shared/         # FilePicker (路径历史), StatusIndicator
-│   │   ├── composables/        # useApi, useSse, useTaskProgress
-│   │   └── assets/main.css
-│   └── vite.config.js          # 代理 /api → 127.0.0.1:9876
-├── functions/                  # 纯功能函数 (无 GUI/Web 依赖)
-│   ├── video_processor.py      # 视频元数据提取 + 帧扫描
-│   ├── tracker.py              # ROI 追踪引擎 (TorchScript 推理)
-│   ├── length_data_analyzer.py # 长度→力转换 + 峰值检测 + 周期分割 + T80
-│   └── roi.py                  # 纯数据 ROI 类
-├── model/track_unet_v2/        # U-Net 追踪模型 (.pt + .pth)
-├── src/test/                   # 测试视频 + CSV 数据
-├── dev.bat                     # 开发模式一键启动
-└── requirements.txt
+├── backend/                    # FastAPI backend
+│   ├── main.py                 # App entry point, CORS + static file mount
+│   ├── launcher.py             # Desktop launcher (pywebview/browser)
+│   ├── api/
+│   │   ├── track.py            # Video open, model load (by name from models.json), tracking start
+│   │   ├── analyze.py          # CSV read/validate/analyze/save
+│   │   └── system.py           # Health check, file dialog, device info, job config
+│   ├── models/schemas.py       # Pydantic request/response models
+│   ├── services/
+│   │   ├── video_service.py    # Video session management (metadata + first frame, single cap.open)
+│   │   ├── tracking_service.py # Model loading + tracking execution (direct in-process inference)
+│   │   ├── analysis_service.py # Analysis pipeline (LengthDataAnalyzer wrapper)
+│   │   ├── job_config.py       # Job config CRUD (<video-dir>/EHT-analytics/config.json)
+│   │   └── task_manager.py     # Async task lifecycle + SSE progress push
+│   └── utils/config.py         # Persistent app config (track_model_name, dir history, roi_names)
+├── frontend/                   # Vue 3 frontend (Vite)
+│   └── src/
+│       ├── App.vue             # Root component: Track/Analyze/Reports tabs, auto model load
+│       ├── main.js             # Vue entry point
+│       ├── components/
+│       │   ├── track/          # TrackPanel, Sidebar (DEVICE badge), VideoCanvas, Progress
+│       │   ├── analyze/        # AnalyzePanel (sample table + metadata + Force chart), Progress, CsvList
+│       │   ├── reports/        # ReportsPanel (sample table + group label selector)
+│       │   └── shared/         # FilePicker (path history memory), StatusIndicator
+│       ├── composables/        # useApi (fetch wrapper), useSse, useTaskProgress
+│       └── assets/main.css
+├── functions/                  # Pure functions (no web dependencies)
+│   ├── length_data_analyzer.py # length → force → peak detection → cycle segmentation → T80 → metrics
+│   ├── tracker.py              # ROI tracking engine (frame loop + inference + interpolation + CSV output)
+│   ├── roi.py                  # Pure data ROI class + color palette
+│   └── video_processor.py      # OpenCV video metadata utilities
+├── model/                       # Production inference models
+│   ├── models.json              # Central model registry (name, display_name, weights, classes)
+├── model/unet_v2/               # U-Net v2 tracking model (5-model ensemble, 512×512)
+│   ├── unet_v2.py               # Model definition + load_model(weight_paths, device) -> EHTTracker
+│   └── unet_v2_R*_weights.pth   # 5 pure weight files (state_dict only)
+├── model/unet_v3/               # U-Net v3 tracking model (single model, 256×256)
+│   ├── unet_v3.py               # Model definition + load_model(weight_paths, device) -> EHTTracker
+│   └── unet_v3_weights.pth      # Pure model weights (state_dict only)
+├── config/                     # Persistent app config
+│   └── app_config.json         # (gitignored) track_model_name, dir history, roi_names
+├── build/                      # PyInstaller packaging scripts
+├── dev.bat                     # Dev mode launcher
+├── requirements.txt
+└── pyproject.toml
 ```
 
-## API 端点
+## Frontend Component Tree
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /api/system/health | 健康检查 |
-| GET | /api/system/config | 获取配置 |
-| POST | /api/system/config/save-path | 保存路径历史 |
-| GET | /api/system/device | 设备信息 (GPU/CPU + 显存/内存) |
-| POST | /api/system/native-file-dialog | 原生文件对话框 |
-| POST | /api/system/open-folder | 在文件管理器中打开 |
-| POST | /api/system/list-csv | 列出文件夹中 CSV |
-| POST | /api/track/video/open | 打开视频，返回首帧 |
-| POST | /api/track/video/process | 后台扫描所有帧 |
-| POST | /api/track/model/load | 加载 TorchScript 模型 (GPU优先) |
-| GET | /api/track/model/status | 模型状态 (设备、路径、显存) |
-| POST | /api/track/start | 开始追踪 |
-| DELETE | /api/track/task/{id} | 取消任务 |
-| GET | /api/track/task/{id}/stream | SSE 进度流 |
-| POST | /api/analyze/validate | 验证 CSV |
-| POST | /api/analyze/start | 开始分析 |
-| POST | /api/analyze/save | 保存结果 |
-| GET | /api/analyze/task/{id}/stream | SSE 进度流 |
+```
+App.vue
+├─ TrackPanel.vue
+│  ├─ TrackSidebar.vue          Device badge · Recording picker · Model dropdown · Track/Open buttons
+│  ├─ VideoCanvas.vue           Canvas (ROI rectangle draw + name + delete) · resize responsive
+│  └─ TrackProgressDialog.vue   SSE progress · error card
+├─ AnalyzePanel.vue
+│  ├─ FilePicker (Open)         Select EHT-analytics directory
+│  ├─ Sample Table              Checkbox · Sample ID · Recording · ROI Name · Metadata columns · Length/Force/Metrics status
+│  │  └─ Add Metadata button    Dynamically add editable column (key+value, built-in Recording/ROI Name non-editable/deletable)
+│  ├─ Force Visualization       Chart.js line chart · auto-load force-status CSV on select
+│  └─ AnalyzeProgressDialog     SSE progress · auto-save
+└─ ReportsPanel.vue
+   ├─ FilePicker (Open) + Refresh
+   ├─ Sample Table              Checkbox · Sample ID · Recording · ROI Name · Metadata columns (only rows with metrics)
+   └─ Group Label Selector      Recording · ROI Name · all metadata keys (multi-select, all unselected initially)
+```
 
-## 功能完成情况
+## API Endpoints
 
-### 已实现
-- FastAPI + Vue 3 Web 应用，替代原 wxPython GUI
-- Track 页签: 视频打开、ROI 绘制、实时预览缩放、模型管理
-- Analyze 页签: CSV 批量分析、结果保存
-- 模型自动加载（启动时从持久化路径加载）+ 失败错误提示
-- GPU 推理 (CUDA)，RTX 4070 Ti SUPER 上 4 ROI × 10003 帧 ≈ 18 分钟（vs CPU 16 小时）
-- DEVICE 模块：侧边栏顶部显示设备型号和显存/内存
-- 文件路径历史分离存储（Recording + Model 各自记忆上次目录）
-- SSE 任务进度实时推送，支持取消
-- 路径历史持久化 (`config/app_config.json`)
+### System (`/api/system`)
 
-### 待完成
-- 桌面打包: PyInstaller + pywebview
-- 单元测试补充
-- 部署到 NAS/服务器
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | `{"status": "ok"}` |
+| GET | /device | GPU model+VRAM or CPU+RAM |
+| GET | /models | List available models from models.json registry |
+| GET | /config | Returns track_model_name, last_recording_dir, last_model_dir, roi_names |
+| POST | /config/save-path | `{key, path}` Save directory history |
+| POST | /config/save-roi-names | `{names: [...]}` Save ROI naming template |
+| POST | /native-file-dialog | Native file/directory picker dialog (tkinter) |
+| POST | /open-folder | Open directory/select file in file manager |
+| POST | /list-csv | List all `.csv` in a directory |
+| POST | /init-job-dir | Create `<video>/EHT-analytics/` + empty config.json |
+| POST | /job-config | Read config.json (samples + metadata_keys) |
+| POST | /save-metadata | Save metadata_keys + each sample's metadata values |
 
-## 开发环境
+### Track (`/api/track`)
 
-- **Python**: conda `eht` 环境, PyTorch 2.12.0+cu126
-- **Node.js**: 系统 `npm`
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /video/open | Open video → return metadata + first frame base64 |
+| POST | /model/load | Load model by name from models.json registry → background assemble EHTTracker (GPU preferred) |
+| GET | /model/status | loaded, model_name, device, device_info |
+| POST | /start | Pass video_id + ROIs + output_folder → background tracking |
+| DELETE | /task/{id} | Cancel task |
+| GET | /task/{id}/stream | SSE progress stream |
+
+### Analyze (`/api/analyze`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /read-csv | `{job_dir, paths}` → return columns + rows JSON |
+| POST | /validate | Check CSV existence |
+| POST | /start | Pass csv_paths → background analysis (pre-check time/length column validity) |
+| POST | /save | Save force-status + metrics CSV to job directory |
+| GET | /task/{id}/stream | SSE progress stream |
+
+## Data Flow
+
+```
+Select Video ──(video/open)──→ metadata + first frame
+     │
+Draw ROI ──(frontend)──→ ROI coordinates
+     │
+Select model from dropdown ──(model/load)──→ load model directly in-process (GPU preferred)
+     │
+Click Track ──(track/start)──→ process_tracking()
+     │                              ├─ frame-by-frame cap.read → direct in-process model inference
+     │                              ├─ compute two-point distance = length
+     │                              ├─ interpolate to uniform time grid (dt = min(t_diff))
+     │                              └─ write lengths/{id}_{recording}_{roi}_length.csv
+     │
+Click Analyze ──(analyze/start)──→ LengthDataAnalyzer.analyze_lt_csvs()
+     │                                   ├─ load length CSV
+     │                                   ├─ unify_interval (uniform time step)
+     │                                   ├─ calc_features (v_left, v_right, v, a, l_dev)
+     │                                   ├─ calc_force (length → force, PDMS mechanics model)
+     │                                   ├─ identify_peaks + identify_move_on_peaks
+     │                                   ├─ seg_cycles + compute t80
+     │                                   └─ return force_status DataFrames + metrics
+     │
+Click Save (auto) ──(analyze/save)──→ write:
+          │    force-status/{id}_{recording}_{roi}_force_status.csv (time, force, status)
+          │    metrics/{id}_{recording}_{roi}_metrics.csv (7 metric columns)
+          │    update force_status_csv, metrics_csv fields in config.json
+```
+
+## Configuration Files
+
+### config/app_config.json (application-level, gitignored)
+```json
+{
+  "track_model_name": "unet_v3",
+  "last_recording_dir": "D:/.../data/HMBS-EHT/250904_rEHT",
+  "last_model_dir": "D:/.../model/unet_v3",
+  "roi_names": ["EHT-1", "EHT-2"]
+}
+```
+
+### `<video-dir>/EHT-analytics/config.json` (job-level)
+```json
+{
+  "samples": [{
+    "id": "00000",
+    "recording_name": "d14",
+    "roi_name": "EHT-1",
+    "length_csv": "lengths/00000_d14_EHT-1_length.csv",
+    "force_status_csv": "force-status/00000_d14_EHT-1_force_status.csv",
+    "metrics_csv": "metrics/00000_d14_EHT-1_metrics.csv",
+    "metadata": {"Condition": "Control"}
+  }],
+  "metadata_keys": ["Condition"]
+}
+```
+
+## Job Output Directory Structure
+
+```
+<video-dir>/EHT-analytics/
+├── config.json
+├── lengths/
+│   └── {sample_id}_{recording}_{roi}_length.csv     (time, length)
+├── force-status/
+│   └── {sample_id}_{recording}_{roi}_force_status.csv  (time, force, status)
+└── metrics/
+    └── {sample_id}_{recording}_{roi}_metrics.csv        (7 metric columns)
+```
+
+## Metric Columns
+
+| Column | Meaning |
+|--------|---------|
+| EHT name | Composite identifier |
+| Contraction Force | Peak contraction force (N) |
+| Relaxation Force | Relaxation phase force (N) |
+| Diastolic Tension | Diastolic tension (N) |
+| Frequency | Contraction frequency (bpm) |
+| Time to Peak 80% | T80 contraction (s) |
+| Relaxation Time 80% | T80 relaxation (s) |
+
+## Naming Conventions
+
+- Sample ID: 5-digit zero-padded integer (00000, 00001...)
+- Recording name: video filename without extension
+- ROI name: user-defined, default "EHT-{n}"
+- CSV naming: `{sample_id}_{recording}_{roi_name}_{type}.csv`
+- Job directory: always `EHT-analytics/` co-located with the video
+
+## Development Environment
+
+- **Python**: uv-managed venv (`.venv/`), PyTorch 2.x+cu126
 - **GPU**: NVIDIA GeForce RTX 4070 Ti SUPER (16376 MB)
-- **端口**: 后端 9876, 前端开发 5173
+- **Node.js**: npm, Vite 6
+- **Ports**: backend 9876, frontend dev 5173 (Vite proxies /api → 9876)

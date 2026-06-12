@@ -30,9 +30,10 @@ import { ref, reactive, watch, onMounted, onUnmounted, nextTick } from 'vue'
 const props = defineProps({
   frameSrc: { type: String, default: '' },
   frameSize: { type: Object, default: () => ({ width: 0, height: 0 }) },
+  savedNames: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['rois-changed'])
+const emit = defineEmits(['rois-changed', 'names-changed'])
 
 const COLORS = [
   [255, 0, 0], [0, 255, 0], [0, 128, 255],
@@ -163,7 +164,8 @@ function onMouseUp() {
   if (r && r.width > 10 && r.height > 10) {
     const pixel = canvasToPixel(r.x, r.y, r.width, r.height)
     const color = COLORS[rois.length % COLORS.length]
-    const name = `ROI_${rois.length + 1}`
+    const idx = rois.length
+    const name = props.savedNames[idx] || defaultRoiName(idx + 1)
     rois.push({
       name,
       x: pixel.x,
@@ -173,6 +175,7 @@ function onMouseUp() {
       color: [...color],
     })
     emit('rois-changed', rois.length)
+    emitNames()
   }
   drawAll()
 }
@@ -181,11 +184,13 @@ function renameRoi(idx, newName) {
   if (!newName.trim()) return
   if (rois.some((r, i) => i !== idx && r.name === newName.trim())) return
   rois[idx].name = newName.trim()
+  emitNames()
 }
 
 function deleteRoi(idx) {
   rois.splice(idx, 1)
   emit('rois-changed', rois.length)
+  emitNames()
   drawAll()
 }
 
@@ -200,9 +205,22 @@ function getRois() {
   }))
 }
 
+function getNames() {
+  return rois.map(r => r.name)
+}
+
+function defaultRoiName(n) {
+  return `EHT-${n}`
+}
+
+function emitNames() {
+  emit('names-changed', getNames())
+}
+
 function clearRois() {
   rois.splice(0, rois.length)
   emit('rois-changed', 0)
+  emitNames()
   drawAll()
 }
 

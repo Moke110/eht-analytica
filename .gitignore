@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.venv/
+uv.lock
 
 # Frontend build
 frontend/dist/
@@ -23,3 +25,19 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Model weights (large binary files)
+*.pth
+*.pt
+!model/models.json
+
+# Training data (large image datasets)
+training/data/
+training/model/
+training/eval/
+
+# Generated images
+img/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/

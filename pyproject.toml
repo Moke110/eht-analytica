@@ -17,3 +17,15 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "httpx", "pyinstaller>=6.0"]
 desktop = ["pywebview>=5.0"]
+training = [
+    "jupyter>=1.0",
+    "albumentations>=1.4",
+    "scikit-image>=0.22",
+    "matplotlib>=3.8",
+    "tensorboard>=2.16",
+    "scikit-learn>=1.4",
+]
+
+[tool.uv]
+# PyTorch CUDA wheels for GPU support
+extra-index-url = ["https://download.pytorch.org/whl/cu126"]

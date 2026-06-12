@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.models.schemas import (
@@ -16,7 +16,7 @@ from backend.models.schemas import (
     VideoMetadata,
 )
 from backend.services.task_manager import task_manager
-from backend.services.video_service import open_video, process_video_async, get_session
+from backend.services.video_service import open_video, get_session
 from backend.services.tracking_service import (
     get_model_status,
     load_model_async,
@@ -47,22 +47,20 @@ def video_open(req: VideoOpenRequest):
     )
 
 
-@router.post("/video/process")
-def video_process(req: VideoOpenRequest):
-    """Open video and start frame scanning. Returns task_id for SSE."""
-    if not os.path.isfile(req.path):
-        raise HTTPException(400, f"Video not found: {req.path}")
-
-    sess = open_video(req.path)
-    tid = process_video_async(sess.video_id)
-    return {"task_id": tid, "video_id": sess.video_id}
-
-
 @router.post("/model/load")
 def model_load(req: ModelLoadRequest):
-    if not os.path.isfile(req.path):
-        raise HTTPException(400, f"Model not found: {req.path}")
-    tid = load_model_async(req.path)
+    # Validate model name against the central registry
+    import json
+    from pathlib import Path
+    models_json = Path(__file__).resolve().parent.parent.parent / "model" / "models.json"
+    if not models_json.exists():
+        raise HTTPException(500, "models.json registry not found")
+    with open(models_json, "r") as f:
+        registry = json.load(f)
+    valid_names = [m["name"] for m in registry.get("models", [])]
+    if req.model_name not in valid_names:
+        raise HTTPException(400, f"Unknown model: {req.model_name}. Available: {', '.join(valid_names)}")
+    tid = load_model_async(req.model_name)
     return {"task_id": tid}
 
 
@@ -76,7 +74,7 @@ def model_status():
 def track_start(req: TrackStartRequest):
     try:
         rois_dicts = [r.model_dump() for r in req.rois]
-        tid = start_tracking(req.video_id, rois_dicts, req.output_folder)
+        tid = start_tracking(req.video_id, rois_dicts, req.output_folder, req.save_tracked_video, req.save_inferences)
         return {"task_id": tid}
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -89,9 +87,15 @@ def cancel_task(task_id: str):
 
 
 @router.get("/task/{task_id}/stream")
-async def stream_task(task_id: str):
+async def stream_task(task_id: str, request: Request):
+    async def event_generator():
+        async for data in task_manager.stream_events(task_id):
+            if await request.is_disconnected():
+                task_manager.cancel(task_id)
+                return
+            yield data
     return StreamingResponse(
-        task_manager.stream_events(task_id),
+        event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

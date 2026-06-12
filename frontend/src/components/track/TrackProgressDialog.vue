@@ -21,8 +21,9 @@
           >Close</button>
         </div>
 
-        <div v-if="state.status === 'failed'" class="error-msg">
-          {{ state.errorMessage }}
+        <div v-if="state.status === 'failed'" class="error-box">
+          <div class="error-box-title">Tracking Failed</div>
+          <div class="error-box-body">{{ state.errorMessage }}</div>
         </div>
       </div>
     </div>
@@ -42,5 +43,25 @@ defineEmits(['cancel', 'close'])
 <style scoped>
 .progress-msg { font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
 .progress-pct { font-size: 12px; color: var(--text-muted); text-align: right; }
-.error-msg { font-size: 12px; color: var(--danger); margin-top: 8px; word-break: break-word; }
+.error-box {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+}
+.error-box-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #b91c1c;
+  margin-bottom: 6px;
+}
+.error-box-body {
+  font-size: 13px;
+  color: var(--danger);
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+}
 </style>

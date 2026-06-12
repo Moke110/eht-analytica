@@ -1,4 +1,4 @@
-"""Video session management — wraps VideoProcessor for the API layer."""
+"""Video session management — single VideoCapture open for metadata + first frame."""
 
 from __future__ import annotations
 
@@ -6,9 +6,6 @@ import base64
 import uuid
 
 import cv2
-
-from functions.video_processor import VideoProcessor
-from backend.services.task_manager import task_manager
 
 
 class VideoSession:
@@ -18,9 +15,6 @@ class VideoSession:
         self.video_id = uuid.uuid4().hex[:12]
         self.video_path = video_path
         self.metadata: dict = {}
-        self.first_frame_base64: str = ""
-        self.frame_buffer: list = []
-        self.valid_frame_count: int = 0
 
 
 # In-memory session store
@@ -28,20 +22,31 @@ _sessions: dict[str, VideoSession] = {}
 
 
 def open_video(video_path: str) -> VideoSession:
-    """Open a video and extract first frame + metadata. Returns immediately."""
+    """Open video once, read metadata and first frame base64. Returns session."""
     sess = VideoSession(video_path)
 
-    proc = VideoProcessor()
-    sess.metadata = proc.get_video_metadata(video_path)
-
-    # Read first frame for immediate display
     cap = cv2.VideoCapture(video_path)
-    ret, first_frame = cap.read()
-    cap.release()
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
 
+    sess.metadata = {
+        'path': video_path,
+        'fps': cap.get(cv2.CAP_PROP_FPS),
+        'frame_count': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+        'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        'duration': cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
+        if cap.get(cv2.CAP_PROP_FPS) > 0 else 0,
+    }
+
+    ret, first_frame = cap.read()
     if ret and first_frame is not None:
         _, buf = cv2.imencode(".png", first_frame)
         sess.first_frame_base64 = base64.b64encode(buf).decode("utf-8")
+    else:
+        sess.first_frame_base64 = ""
+
+    cap.release()
 
     _sessions[sess.video_id] = sess
     return sess
@@ -49,39 +54,3 @@ def open_video(video_path: str) -> VideoSession:
 
 def get_session(video_id: str) -> VideoSession | None:
     return _sessions.get(video_id)
-
-
-def process_video_async(video_id: str) -> str:
-    """Start frame scanning in background. Returns task_id for SSE streaming."""
-    sess = _sessions.get(video_id)
-    if sess is None:
-        raise ValueError(f"Unknown video session: {video_id}")
-
-    tid = task_manager.create("video_process")
-
-    def worker():
-        try:
-            proc = VideoProcessor()
-
-            def progress_cb(percent, message):
-                task_manager.update(tid, percent, message)
-
-            def completion_cb(metadata, first_frame, error, frame_buffer, valid_count):
-                if error:
-                    task_manager.fail(tid, error)
-                else:
-                    sess.frame_buffer = frame_buffer or []
-                    sess.valid_frame_count = valid_count or 0
-                    task_manager.complete(tid, {
-                        "valid_frame_count": sess.valid_frame_count,
-                        "duration": metadata.get("duration", 0) if metadata else 0,
-                    })
-
-            proc.process_video(sess.video_path, progress_cb, completion_cb)
-        except Exception as e:
-            task_manager.fail(tid, str(e))
-
-    import threading
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    return tid

@@ -39,7 +39,16 @@ class RoiDefinition(BaseModel):
 # ── Model ──────────────────────────────────────────────────────────────
 
 class ModelLoadRequest(BaseModel):
-    path: str
+    model_name: str  # e.g. "unet_v2", "unet_v3"
+
+
+class ModelInfo(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    input_size: list[int]
+    target_size: int
+    num_peaks: int
 
 
 class ModelStatusResponse(BaseModel):
@@ -56,6 +65,8 @@ class TrackStartRequest(BaseModel):
     video_id: str
     rois: list[RoiDefinition]
     output_folder: str
+    save_tracked_video: bool = False
+    save_inferences: bool = False
 
 
 # ── Analyze ────────────────────────────────────────────────────────────
@@ -71,12 +82,14 @@ class AnalyzeValidateResponse(BaseModel):
 
 class AnalyzeStartRequest(BaseModel):
     csv_paths: list[str]
+    job_dir: Optional[str] = None
 
 
 class AnalyzeSaveRequest(BaseModel):
     fs_results: list[dict]
     metrics_rows: Optional[list[dict]] = None
     output_folder: str
+    job_dir: Optional[str] = None
 
 
 class AnalyzeSaveResponse(BaseModel):
@@ -100,12 +113,48 @@ class FileDialogResponse(BaseModel):
 
 class OpenFolderRequest(BaseModel):
     path: str
+    select_file: Optional[str] = None
 
 
 class ConfigResponse(BaseModel):
-    track_model_path: Optional[str] = None
+    track_model_name: Optional[str] = None
     last_recording_dir: Optional[str] = None
     last_model_dir: Optional[str] = None
+    roi_names: list[str] = Field(default_factory=list)
+
+
+class InitJobDirRequest(BaseModel):
+    video_path: str
+
+
+class InitJobDirResponse(BaseModel):
+    job_dir: str
+
+
+class JobConfigResponse(BaseModel):
+    job_dir: str
+    samples: list[dict] = Field(default_factory=list)
+    metadata_keys: list[str] = Field(default_factory=list)
+
+
+# ── Reports ─────────────────────────────────────────────────────────────
+
+class GroupMetricStats(BaseModel):
+    sample_values: list[float] = Field(default_factory=list)
+    mean: float = 0.0
+    ste: float = 0.0
+
+
+class ReportsPlotRequest(BaseModel):
+    job_dir: str
+    sample_ids: list[str] = Field(default_factory=list)
+    group_keys: list[str] = Field(default_factory=list)
+
+
+class ReportsPlotResponse(BaseModel):
+    metrics: list[str] = Field(default_factory=list)
+    groups: list[str] = Field(default_factory=list)
+    data: dict[str, dict[str, GroupMetricStats]] = Field(default_factory=dict)
 
 
 # ── SSE / Task ─────────────────────────────────────────────────────────
