@@ -21,6 +21,14 @@ cd frontend && npm run dev
 # Open http://localhost:5173
 ```
 
+## Features
+
+- **Track**: Open video → draw ROIs → select model → track. Outputs per-ROI length CSVs.
+- **Analyze**: Load length CSVs → compute force → peak detection → cycle metrics (T80, frequency, etc.).
+- **Reports**: View metrics across samples with grouping and visualization.
+- **Save Inferences**: Optional — saves ROI images + model predictions to `EHT-analytics/inferences/` for training data review.
+- **Tracked Video**: Optional — composes an annotated video with overlaid ROI cells and crosshair overlays.
+
 ## Requirements
 
 - Python 3.10+ (managed by uv)
@@ -49,3 +57,15 @@ discovers available models automatically from `model/models.json`.
 Each model directory under `model/` contains:
 - `{name}.py` — Model architecture + `load_model(weight_paths, device)` function
 - `{name}_weights.pth` — Pure model weights (state_dict, no training metadata)
+
+## Developer Docs
+
+- `CLAUDE.md` — Full project reference (structure, API endpoints, data flow, config)
+- `training/README.md` — Training pipeline setup, annotation tool, adding new models
+- `training/CLAUDE.md` — Training codebase reference for LLM context
+
+## Packaging
+
+```bash
+python build/build.py        # PyInstaller build → dist/
+```

@@ -11,6 +11,7 @@ frontend/node_modules/
 
 # Build artifacts
 build/dist/
+dist/
 
 # Config (user-specific)
 config/app_config.json
@@ -31,13 +32,11 @@ Thumbs.db
 *.pt
 !model/models.json
 
-# Training data (large image datasets)
-training/data/
-training/model/
-training/eval/
-
 # Generated images
 img/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
+
+# track model training
+training/

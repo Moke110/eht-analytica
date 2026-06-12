@@ -50,8 +50,19 @@ echo Starting frontend dev server ...
 start "EHT Frontend" cmd /k "cd /d "%PROJECT_DIR%\frontend" && npm run dev"
 
 echo.
-echo Waiting for frontend to be ready...
-timeout /t 3 /nobreak >nul
+echo Waiting for backend to be ready (polling http://127.0.0.1:9876/api/system/health)...
+set /a TRIES=0
+:wait_backend
+timeout /t 1 /nobreak >nul
+set /a TRIES+=1
+powershell -NoProfile -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:9876/api/system/health' -UseBasicParsing -TimeoutSec 2; exit ($r.StatusCode -ne 200) } catch { exit 1 }" 2>nul
+if errorlevel 1 (
+    if %TRIES% LSS 30 goto wait_backend
+    echo WARNING: Backend did not start within 30 s. Opening frontend anyway...
+) else (
+    echo Backend ready after %TRIES% s.
+)
+
 echo Opening http://localhost:5173 ...
 start http://localhost:5173
 

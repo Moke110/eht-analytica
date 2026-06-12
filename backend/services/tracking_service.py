@@ -45,8 +45,8 @@ def load_model_async(model_name: str) -> str:
         try:
             task_manager.update(tid, 5, "Reading models.json...")
 
-            project_root = Path(__file__).resolve().parent.parent.parent
-            models_json = project_root / "model" / "models.json"
+            from backend.utils.paths import get_models_json_path
+            models_json = get_models_json_path()
 
             with open(models_json, "r", encoding="utf-8") as f:
                 registry = json.load(f)
@@ -85,7 +85,8 @@ def load_model_async(model_name: str) -> str:
             load_fn = getattr(mod, load_fn_name)
 
             # Resolve weight paths (relative to model/ directory)
-            model_dir = os.path.dirname(os.path.abspath(str(models_json)))
+            from backend.utils.paths import get_model_dir
+            model_dir = str(get_model_dir())
             weight_paths = [os.path.join(model_dir, w) for w in weight_rels]
 
             task_manager.update(tid, 40, f"Loading model weights to {device}...")

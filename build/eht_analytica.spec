@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 import sys
 from pathlib import Path
 
-_root = Path(__file__).resolve().parent.parent
+_root = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(_root))
 
 a = Analysis(
@@ -12,8 +13,6 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(_root / 'frontend' / 'dist'), 'frontend_dist'),
-        (str(_root / 'model'), 'model'),
-        (str(_root / 'config'), 'config'),
         (str(_root / 'functions'), 'functions'),
         (str(_root / 'backend'), 'backend'),
     ],
@@ -23,11 +22,13 @@ a = Analysis(
         'fastapi', 'starlette', 'pydantic',
         'cv2', 'numpy', 'pandas', 'torch',
         'PIL', 'tkinter', 'tkinter.filedialog',
+        'model.unet_v3.unet_v3',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['wx', 'matplotlib', 'jedi', 'IPython', 'ipykernel'],
+    excludes=['wx', 'matplotlib', 'jedi', 'IPython', 'ipykernel',
+              'albumentations', 'skimage', 'sklearn', 'tensorboard'],
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
@@ -42,7 +43,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_tracked=False,
     argv_emulation=False,
 )

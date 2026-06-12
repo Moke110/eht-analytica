@@ -32,7 +32,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TrackPanel from './components/track/TrackPanel.vue'
 import AnalyzePanel from './components/analyze/AnalyzePanel.vue'
 import ReportsPanel from './components/reports/ReportsPanel.vue'
@@ -49,6 +49,12 @@ function onJobDirChanged(dir) {
 }
 
 onMounted(async () => {
+  // Heartbeat: ping backend every 3 s so it can detect browser close
+  const heartbeatTimer = setInterval(() => {
+    fetch('/api/system/heartbeat').catch(() => {})
+  }, 3000)
+  onBeforeUnmount(() => clearInterval(heartbeatTimer))
+
   try {
     const config = await apiGet('/api/system/config')
     if (config.track_model_name) {

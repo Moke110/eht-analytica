@@ -1,6 +1,7 @@
 """Desktop launcher for EHT Analytica.
 
 Starts the FastAPI backend and opens the frontend in a browser or native webview.
+Exits automatically when the browser tab/window is closed (heartbeat watchdog).
 """
 
 from __future__ import annotations
@@ -32,10 +33,16 @@ def _find_frontend() -> Path | None:
 
 
 def main():
-    # Ensure the project root is on sys.path so `functions.*` imports work
+    # Ensure the project root is on sys.path so `functions.*` imports work.
+    # When frozen, also add the EXE directory so the external model/ is importable.
     base = _get_base_dir()
     if str(base) not in sys.path:
         sys.path.insert(0, str(base))
+
+    if getattr(sys, 'frozen', False):
+        exe_dir = str(Path(sys.executable).parent)
+        if exe_dir not in sys.path:
+            sys.path.insert(0, exe_dir)
 
     # Check frontend exists
     frontend = _find_frontend()
@@ -65,14 +72,17 @@ def main():
         webview.start()
     except ImportError:
         import webbrowser
+        from backend.services.heartbeat import heartbeat_monitor
+
         print(f"Starting EHT Analytica at {url}")
         webbrowser.open(url)
-        print("Press Ctrl+C to exit.")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("Shutting down.")
+
+        # Watchdog: exit when browser disconnects (heartbeat stops)
+        time.sleep(8)  # grace period for browser to load and start pinging
+        while heartbeat_monitor.is_alive():
+            time.sleep(1)
+        print("Browser disconnected. Shutting down EHT Analytica.")
+        os._exit(0)
 
 
 if __name__ == "__main__":

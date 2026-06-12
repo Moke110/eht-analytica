@@ -105,6 +105,14 @@ def health():
     return {"status": "ok"}
 
 
+@router.get("/heartbeat")
+def heartbeat():
+    """Frontend pings this every 3 s so the launcher can detect browser close."""
+    from backend.services.heartbeat import heartbeat_monitor
+    heartbeat_monitor.beat()
+    return {"ok": True}
+
+
 @router.post("/list-csv", response_model=ListCsvResponse)
 def list_csv(req: ListCsvRequest):
     folder = req.folder
@@ -136,8 +144,8 @@ def get_config():
 def list_models():
     """Return available models from the central models.json registry."""
     import json
-    from pathlib import Path
-    models_json = Path(__file__).resolve().parent.parent.parent / "model" / "models.json"
+    from backend.utils.paths import get_models_json_path
+    models_json = get_models_json_path()
     if not models_json.exists():
         return {"models": []}
     with open(models_json, "r") as f:

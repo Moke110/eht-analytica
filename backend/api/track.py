@@ -51,8 +51,8 @@ def video_open(req: VideoOpenRequest):
 def model_load(req: ModelLoadRequest):
     # Validate model name against the central registry
     import json
-    from pathlib import Path
-    models_json = Path(__file__).resolve().parent.parent.parent / "model" / "models.json"
+    from backend.utils.paths import get_models_json_path
+    models_json = get_models_json_path()
     if not models_json.exists():
         raise HTTPException(500, "models.json registry not found")
     with open(models_json, "r") as f:

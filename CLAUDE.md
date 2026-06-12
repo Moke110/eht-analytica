@@ -57,6 +57,13 @@ EHT_Analytica/
 │   ├── tracker.py              # ROI tracking engine (frame loop + inference + interpolation + CSV output)
 │   ├── roi.py                  # Pure data ROI class + color palette
 │   └── video_processor.py      # OpenCV video metadata utilities
+├── training/                    # Developer-only training & evaluation pipeline
+│   ├── train_eval.ipynb         # Jupyter notebook: full training + eval workflow
+│   ├── src/
+│   │   ├── core/                # Training loop, losses, metrics, pipeline
+│   │   └── dataset/             # Dataset, annotation tool, augmentations, inference collector
+│   ├── configs/                 # Training hyperparameter configs
+│   └── model/                   # Per-model training manifests
 ├── model/                       # Production inference models
 │   ├── models.json              # Central model registry (name, display_name, weights, classes)
 ├── model/unet_v2/               # U-Net v2 tracking model (5-model ensemble, 512×512)
@@ -68,6 +75,7 @@ EHT_Analytica/
 ├── config/                     # Persistent app config
 │   └── app_config.json         # (gitignored) track_model_name, dir history, roi_names
 ├── build/                      # PyInstaller packaging scripts
+├── dist/                       # PyInstaller build output (gitignored)
 ├── dev.bat                     # Dev mode launcher
 ├── requirements.txt
 └── pyproject.toml
@@ -145,6 +153,8 @@ Select model from dropdown ──(model/load)──→ load model directly in-pr
 Click Track ──(track/start)──→ process_tracking()
      │                              ├─ frame-by-frame cap.read → direct in-process model inference
      │                              ├─ compute two-point distance = length
+     │                              ├─ (if save_inferences) save ROI images + coords to inferences/
+     │                              ├─ (if save_tracked_video) compose annotated tracked_video/
      │                              ├─ interpolate to uniform time grid (dt = min(t_diff))
      │                              └─ write lengths/{id}_{recording}_{roi}_length.csv
      │
@@ -200,8 +210,13 @@ Click Save (auto) ──(analyze/save)──→ write:
 │   └── {sample_id}_{recording}_{roi}_length.csv     (time, length)
 ├── force-status/
 │   └── {sample_id}_{recording}_{roi}_force_status.csv  (time, force, status)
-└── metrics/
-    └── {sample_id}_{recording}_{roi}_metrics.csv        (7 metric columns)
+├── metrics/
+│   └── {sample_id}_{recording}_{roi}_metrics.csv        (7 metric columns)
+├── tracked_video/
+│   └── {recording}_tracked.mp4                          (annotated tracking video)
+└── inferences/
+    ├── trainsets.json                                   (sample registry)
+    └── {sample_id}_ROI.jpg                              (ROI image per sampled frame)
 ```
 
 ## Metric Columns

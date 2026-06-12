@@ -182,6 +182,7 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
                         and frame_idx % 30 == 0:
                     try:
                         from training.src.dataset.inference_collector import save_sample
+                        inferences_dir = os.path.join(output_folder, "inferences")
                         save_sample(
                             roi_gray=roi_images[i],
                             coords=coords,
@@ -191,6 +192,7 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
                             recording=recording_name,
                             roi_name=roi['name'],
                             frame_idx=frame_idx,
+                            data_dir=inferences_dir,
                         )
                     except Exception as _ce:
                         print(f"[tracker] Failed to save inference sample: {_ce}")

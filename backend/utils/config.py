@@ -7,9 +7,8 @@ from pathlib import Path
 
 
 def _get_repo_root() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).resolve().parent.parent.parent
+    from backend.utils.paths import get_app_root
+    return get_app_root()
 
 
 def _config_dir() -> Path:
@@ -117,7 +116,7 @@ def get_all_config() -> dict:
     """Return all config for the frontend."""
     data = _read_config()
     return {
-        "track_model_name": data.get("track_model_name"),
+        "track_model_name": data.get("track_model_name") or "unet_v3",
         "last_recording_dir": data.get("last_recording_dir"),
         "last_model_dir": data.get("last_model_dir"),
         "roi_names": data.get("roi_names", []),
