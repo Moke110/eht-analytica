@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from scipy.signal import savgol_filter
+from scipy.stats import gaussian_kde
 
 # Use a lightweight, built-in file dialog for CSV selection on all platforms
 try:
@@ -278,127 +280,206 @@ def calc_features(lt_uni_df: pd.DataFrame, dt: float) -> pd.DataFrame:
 	return lt_feat_df
 
 
-def identify_peaks(lt_feat_df: pd.DataFrame) -> pd.DataFrame:
-	"""Identify contraction peaks based on normalized features in lt_feat_df.
+def classify_states(force_df: pd.DataFrame, dt: float) -> pd.DataFrame:
+	"""Single-pass force-derivative state classifier for EHT contraction cycles.
 
-			Peak criteria (all must be satisfied):
-				- l_dev(t) < 0.1
-			- a(t) > 0
-			- v_left(t) < 0
-			- v_right(t) > 0
+	Uses Savitzky-Golay smoothing, derivative sign, adaptive baseline detection
+	(KDE mode), and contraction->relaxation transition peak detection.
 
-	Adds a 'status' column: default 'rest', 'peak' where condition satisfies.
-	Returns a copy of the input DataFrame with the new column.
+	States: 'rest', 'contraction', 'peak', 'relaxation', 'burst rest'
+
+	Parameters
+	----------
+	force_df : pd.DataFrame with columns ['time', 'force']
+	dt : float, sampling interval in seconds
+
+	Returns
+	-------
+	pd.DataFrame with added 'status' column
 	"""
-	if lt_feat_df is None or lt_feat_df.empty:
-		raise ValueError('lt_feat_df must be a non-empty DataFrame with features.')
-	required_cols = ('time', 'length', 'a', 'l_dev', 'v_left', 'v_right')
-	for col in required_cols:
-		if col not in lt_feat_df.columns:
-			raise ValueError(f"Column '{col}' is required in lt_feat_df.")
+	if force_df is None or force_df.empty:
+		raise ValueError('force_df must be a non-empty DataFrame.')
+	for col in ('time', 'force'):
+		if col not in force_df.columns:
+			raise ValueError(f"Column '{col}' is required in force_df.")
 
-	peak_df = lt_feat_df.copy()
-	status = np.full(len(peak_df), 'rest', dtype=object)
-	# Use a threshold of 0 on normalized acceleration 'a'
-	mask_peak = (
-		(peak_df['l_dev'].to_numpy() < 0.1)
-		& (peak_df['a'].to_numpy() > 0)
-		& (peak_df['v_left'].to_numpy() < 0)
-		& (peak_df['v_right'].to_numpy() > 0)
+	times = force_df['time'].to_numpy(dtype=float)
+	forces = force_df['force'].to_numpy(dtype=float)
+	n = len(forces)
+
+	# Constants (mirrors LengthDataAnalyzer)
+	sg_window_sec = 0.05
+	sg_order = 2
+	df_threshold_frac = 0.015
+	f_rest_threshold = 0.05
+	min_segment_samples = 3
+	rest_timeout_sec = 0.2
+	burst_max_interval_sec = 1.5
+
+	# ---- Phase 1: Smooth and derivative ----
+	sg_window = max(3, int(sg_window_sec / dt))
+	if sg_window % 2 == 0:
+		sg_window += 1
+	if n > sg_window:
+		f_smooth = savgol_filter(forces, sg_window, sg_order)
+	else:
+		f_smooth = forces.copy()
+	df_dt = np.gradient(f_smooth, dt)
+
+	# ---- Phase 2: Baseline via KDE mode ----
+	try:
+		kde = gaussian_kde(forces)
+		x_grid = np.linspace(float(np.min(forces)), float(np.max(forces)), 500)
+		baseline = float(x_grid[np.argmax(kde(x_grid))])
+	except Exception:
+		hist, edges = np.histogram(forces, bins=min(100, n // 10))
+		baseline = float((edges[np.argmax(hist)] + edges[np.argmax(hist) + 1]) / 2.0)
+
+	f_range = float(np.max(forces) - np.min(forces))
+	if f_range < 1e-12:
+		result = force_df.copy()
+		result['status'] = 'rest'
+		return result
+
+	# ---- Phase 3: Noise estimation ----
+	noise_window = 0.15 * f_range
+	near_baseline_mask = np.abs(forces - baseline) < noise_window
+	if near_baseline_mask.sum() > 20:
+		base_df = df_dt[near_baseline_mask]
+		mad = float(np.median(np.abs(base_df - np.median(base_df))))
+		noise_std = mad * 1.4826
+	else:
+		noise_std = float(np.std(df_dt))
+
+	df_threshold = max(
+		df_threshold_frac * f_range / dt,
+		min(3.0 * noise_std, 0.5 * df_threshold_frac * f_range / dt),
 	)
-	status[mask_peak] = 'peak'
-	peak_df['status'] = status
-	return peak_df
+	rest_margin = f_rest_threshold * f_range
 
+	# ---- Phase 4: State assignment by derivative ----
+	status = np.full(n, '', dtype=object)
+	for i in range(n):
+		if df_dt[i] > df_threshold:
+			status[i] = 'contraction'
+		elif df_dt[i] < -df_threshold:
+			status[i] = 'relaxation'
+		elif np.abs(forces[i] - baseline) <= rest_margin:
+			status[i] = 'rest'
+		else:
+			status[i] = 'rest'
 
-def identify_move_on_peaks(peak_df: pd.DataFrame) -> pd.DataFrame:
-	"""Identify contraction/relaxation spans around each peak using feature signs.
-
-	Rules applied for each peak at row index p (0-based):
-				- Left of peak (contraction): walk i = p-1, p-2, ... labeling status(i) = 'contraction'
-					until the stop condition is met: v_right(i) > -0.01 AND l_dev(i) > 0.25.
-				- Right of peak (relaxation): walk i = p+1, p+2, ... labeling status(i) = 'relaxation'
-					until the stop condition is met: v_left(i) < 0.01 AND l_dev(i) > 0.25.
-
-	Existing 'peak' labels are preserved. If a point already has a non-'rest' label, it
-	is left unchanged to avoid conflicts between neighboring peaks.
-
-	Returns a copy of the input DataFrame with updated 'status'.
-	"""
-	if peak_df is None or peak_df.empty:
-		raise ValueError('peak_df must be a non-empty DataFrame.')
-	# We require v_left, v_right for walking conditions and l_dev for the incremental-change criterion
-	required_cols = ('status', 'v_right', 'v_left', 'l_dev')
-	for col in required_cols:
-		if col not in peak_df.columns:
-			raise ValueError(f"Column '{col}' is required in peak_df.")
-
-	identified_df = peak_df.copy()
-	statuses = identified_df['status'].to_numpy(dtype=object)
-	v_right = identified_df['v_right'].to_numpy(dtype=float)
-	v_left = identified_df['v_left'].to_numpy(dtype=float)
-	l_dev = identified_df['l_dev'].to_numpy(dtype=float)
-	n = len(identified_df)
-
-	peak_indices = np.flatnonzero(statuses == 'peak')
-	for p in peak_indices:
-		# Walk left: contraction until stop condition (v_right > -0.01 and l_dev > 0.25)
-		i = p - 1
-		while i >= 0:
-			if (v_right[i] > -0.03) and (l_dev[i] > 0.25):
-				break
-			if statuses[i] == 'rest':
-				statuses[i] = 'contraction'
-			i -= 1
-
-		# Walk right: relaxation until stop condition (v_left < 0.01 and l_dev > 0.25)
-		i = p + 1
-		while i < n:
-			if (v_left[i] < 0.03) and (l_dev[i] > 0.25):
-				break
-			if statuses[i] == 'rest':
-				statuses[i] = 'relaxation'
+	# ---- Phase 5: Peak detection at contraction->relaxation boundary ----
+	is_peak = np.zeros(n, dtype=bool)
+	i = 1
+	while i < n:
+		if status[i-1] == 'contraction' and status[i] in ('relaxation', 'rest'):
+			relax_start = i
+			while relax_start < n and status[relax_start] == 'rest':
+				relax_start += 1
+			if relax_start >= n or status[relax_start] != 'relaxation':
+				i = relax_start
+				continue
+			gap_len = relax_start - i
+			if gap_len > 3:
+				i = relax_start
+				continue
+			search_start = max(0, i - 1)
+			while search_start > 0 and status[search_start] == 'contraction':
+				search_start -= 1
+			search_end = min(n, relax_start + 1)
+			best_j = search_start + int(np.argmax(forces[search_start:search_end]))
+			if forces[best_j] >= baseline + 0.05 * f_range:
+				is_peak[best_j] = True
+			i = relax_start + 1
+		else:
 			i += 1
 
-	# After labeling contraction/relaxation, compute burst_peak_interval (75th percentile)
-	# and label 'burst rest' between qualifying successive peaks.
-	if peak_indices.size >= 2:
-		times = identified_df['time'].to_numpy(dtype=float)
-		peak_times = times[peak_indices]
-		intervals = np.diff(peak_times)
-		if intervals.size > 0:
-			burst_peak_interval = float(np.percentile(intervals, 75))
+	for i in range(n):
+		if is_peak[i]:
+			status[i] = 'peak'
+
+	all_peak_idx = np.flatnonzero(is_peak)
+	all_peak_idx.sort()
+
+	# ---- Phase 6: Post-processing ----
+	# Merge short segments (never absorb peaks)
+	status = _merge_short_segments(status, min_segment_samples)
+
+	# Burst rest
+	if all_peak_idx.size >= 2:
+		all_peak_times = times[all_peak_idx]
+		for p_idx in range(len(all_peak_idx) - 1):
+			p_time = all_peak_times[p_idx]
+			next_time = all_peak_times[p_idx + 1]
+			if next_time - p_time < burst_max_interval_sec:
+				mask_between = (times > p_time) & (times < next_time)
+				rest_mask = (status == 'rest')
+				label_mask = mask_between & rest_mask
+				if np.any(label_mask):
+					status[label_mask] = 'burst rest'
+
+	# Cut off stale relaxation
+	status = _cutoff_stale_relaxation(times, forces, status, baseline, rest_margin, rest_timeout_sec, dt)
+
+	result = force_df.copy()
+	result['status'] = status
+	return result
+
+
+def _merge_short_segments(status: np.ndarray, min_samples: int) -> np.ndarray:
+	"""Absorb segments shorter than min_samples into surrounding state.
+	Peak segments are never absorbed."""
+	n = len(status)
+	if n < min_samples:
+		return status
+	out = status.copy()
+	i = 0
+	while i < n:
+		start = i
+		current = out[i]
+		while i < n and out[i] == current:
+			i += 1
+		end = i
+		length = end - start
+		if length < min_samples and current != 'peak':
+			if start > 0:
+				replacement = out[start - 1]
+			elif end < n:
+				replacement = out[end]
+			else:
+				replacement = 'rest'
+			out[start:end] = replacement
+	return out
+
+
+def _cutoff_stale_relaxation(
+	times: np.ndarray, forces: np.ndarray, status: np.ndarray,
+	baseline: float, rest_margin: float, timeout_sec: float, dt: float,
+) -> np.ndarray:
+	"""Force relaxation -> rest when force has been near baseline beyond timeout."""
+	n = len(status)
+	out = status.copy()
+	timeout_samples = int(timeout_sec / dt)
+	if timeout_samples < 1:
+		return out
+	i = 0
+	while i < n:
+		if out[i] == 'relaxation':
+			relax_start = i
+			while i < n and out[i] == 'relaxation':
+				i += 1
+			relax_end = i
+			seg_f = forces[relax_start:relax_end]
+			near_base = np.abs(seg_f - baseline) <= rest_margin
+			if np.any(near_base):
+				first_base = int(np.argmax(near_base))
+				cutoff = relax_start + first_base + timeout_samples
+				if cutoff < relax_end:
+					out[cutoff:relax_end] = 'rest'
 		else:
-			burst_peak_interval = None
-	else:
-		burst_peak_interval = None
-
-	if burst_peak_interval is not None and np.isfinite(burst_peak_interval) and burst_peak_interval > 0:
-		# For each peak at time p, if there exists another peak in (p, p + 1.1 * interval),
-		# label 'rest' points strictly between p and that next peak as 'burst rest'.
-		times = identified_df['time'].to_numpy(dtype=float)
-		for idx, p_idx in enumerate(peak_indices):
-			p_time = times[p_idx]
-			# Consider subsequent peaks only
-			cand = peak_indices[peak_indices > p_idx]
-			if cand.size == 0:
-				continue
-			cand_times = times[cand]
-			window_end = p_time * 1.0 + 1.5 * burst_peak_interval
-			in_window = cand[cand_times < window_end]
-			if in_window.size == 0:
-				continue
-			next_peak_idx = int(in_window[0])  # earliest next peak within window
-			next_time = times[next_peak_idx]
-			# Mask rest points strictly between p_time and next_time
-			mask_between = (times > p_time) & (times < next_time)
-			rest_mask = (statuses == 'rest')
-			label_mask = mask_between & rest_mask
-			if np.any(label_mask):
-				statuses[label_mask] = 'burst rest'
-
-	identified_df['status'] = statuses
-	return identified_df
+			i += 1
+	return out
 
 
 def plot_lt_feat(lt_feat_df: pd.DataFrame) -> str:
@@ -575,11 +656,8 @@ if __name__ == "__main__":
 	# 4) Calculate force
 	lt_feat_df = calc_force(lt_feat_df)
 
-	# 5) Identify peaks
-	lt_peaks_df = identify_peaks(lt_feat_df)
-
-	# 6) identify contraction/relaxation spans
-	lt_identified_df = identify_move_on_peaks(lt_peaks_df)
+	# 5) Classify states using force-derivative method
+	lt_identified_df = classify_states(lt_feat_df, dt)
 
 	# 7) Plot force/status
 	out_force_status_path = plot_force_status(lt_identified_df)

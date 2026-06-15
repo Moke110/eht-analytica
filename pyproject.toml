@@ -12,6 +12,7 @@ dependencies = [
     "pandas",
     "opencv-python",
     "torch>=2.0",
+    "scipy>=1.0",
 ]
 
 [project.optional-dependencies]

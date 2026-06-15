@@ -39,5 +39,5 @@ img/
 # track model training
 training/
 
-# Test data / analysis outputs
-test/
+# Test data / analysis outputs (root-level only)
+/test/
