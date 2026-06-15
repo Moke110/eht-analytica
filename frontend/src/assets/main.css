@@ -37,6 +37,13 @@
   flex-shrink: 0;
 }
 
+.header-logo {
+  height: 24px;
+  width: 24px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
 .tab-btn {
   padding: 8px 18px;
   border: none;

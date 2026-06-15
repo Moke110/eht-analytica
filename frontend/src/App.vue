@@ -1,6 +1,7 @@
 <template>
   <div class="app">
     <header class="tab-bar">
+      <img src="/logo.ico" alt="Logo" class="header-logo" />
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'track' }"

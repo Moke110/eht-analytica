@@ -20,31 +20,22 @@ def step(msg: str) -> None:
 def build_frontend() -> None:
     """Build Vue frontend into frontend/dist/."""
     frontend_dir = ROOT / "frontend"
-    dist_dir = frontend_dir / "dist"
-    if (dist_dir / "index.html").exists():
-        print("  Frontend dist/ already exists, skipping npm build")
-        return
-
     package_json = frontend_dir / "package.json"
     if not package_json.exists():
         print("WARNING: frontend/package.json not found, skipping npm build")
         return
 
     step("Building Vue frontend...")
-    # Resolve npm via PATH or common install locations
+    # Resolve npm: try PATH first, then common install locations
     npm_exe = "npm"
-    for p in [r"D:\nodejs\npm.cmd", r"C:\Program Files\nodejs\npm.cmd"]:
-        if os.path.isfile(p):
-            npm_exe = p
-            break
-    env = os.environ.copy()
-    # Ensure common node install paths are in PATH
     for node_path in [r"D:\nodejs", r"C:\Program Files\nodejs"]:
-        if os.path.isdir(node_path):
-            env["PATH"] = node_path + os.pathsep + env.get("PATH", "")
-    subprocess.run([npm_exe, "install"], cwd=str(frontend_dir), check=True, env=env)
-    subprocess.run([npm_exe, "run", "build"], cwd=str(frontend_dir), check=True, env=env)
-    print(f"  Frontend built -> {dist_dir}")
+        candidate = os.path.join(node_path, "npm.cmd")
+        if os.path.isfile(candidate):
+            npm_exe = candidate
+            break
+    subprocess.run([npm_exe, "install"], cwd=str(frontend_dir), check=True)
+    subprocess.run([npm_exe, "run", "build"], cwd=str(frontend_dir), check=True)
+    print(f"  Frontend built -> {frontend_dir / 'dist'}")
 
 
 def run_pyinstaller() -> None:
@@ -58,62 +49,75 @@ def run_pyinstaller() -> None:
     )
 
 
-_RELEASE_MODELS_JSON = {
-    "models": [
-        {
-            "name": "unet_v3",
-            "display_name": "EHT Tracker v3",
-            "description": "Single U-Net model (256×256, 3-stage) for EHT pillar coordinate tracking",
-            "definition": "unet_v3/unet_v3.py",
-            "weights": ["unet_v3/unet_v3_weights.pth"],
-            "load_function": "load_model",
-            "module": "unet_v3",
-            "ensemble_class": "EHTTracker",
-            "model_class": "CircleCenterNet",
-            "input_channels": 1,
-            "input_size": [256, 256],
-            "target_size": 256,
-            "num_peaks": 2,
-        }
-    ]
-}
-
-
 def assemble_release() -> None:
     """Copy external model files into the COLLECT output folder."""
     step("Assembling release folder...")
 
     dist_dir = ROOT / "dist" / "EHT_Analytica"
     model_dst = dist_dir / "model"
-    unet_dst = model_dst / "unet_v3"
 
-    # Create model directories
+    # Models excluded from release builds
+    EXCLUDE_MODELS = {"unet_v2"}
+
+    # Read model registry from source of truth and filter to release models
+    source_registry_path = ROOT / "model" / "models.json"
+    if source_registry_path.exists():
+        registry = json.loads(source_registry_path.read_text(encoding="utf-8"))
+        release_models = []
+        for m in registry.get("models", []):
+            if m["name"] in EXCLUDE_MODELS:
+                print(f"  Skipping model (excluded): {m['name']}")
+                continue
+            model_dir = ROOT / "model" / m["module"]
+            weights_exist = all(
+                (model_dir / Path(w).name).exists()
+                for w in m.get("weights", [])
+            )
+            if weights_exist:
+                release_models.append(m)
+                print(f"  Including model: {m['name']}")
+            else:
+                print(f"  Skipping model (missing weights): {m['name']}")
+    else:
+        print("  WARNING: model/models.json not found, using fallback")
+        release_models = []
+
+    if not release_models:
+        print("  ERROR: No models available for release build")
+        sys.exit(1)
+
+    # Create model directories and copy each model
     model_dst.mkdir(exist_ok=True)
-    unet_dst.mkdir(exist_ok=True)
-
-    # __init__.py files (required for importlib)
     (model_dst / "__init__.py").write_text("", encoding="utf-8")
-    (unet_dst / "__init__.py").write_text("", encoding="utf-8")
 
-    # models.json (v3-only release version)
+    # Write filtered models.json
     models_json_path = model_dst / "models.json"
     models_json_path.write_text(
-        json.dumps(_RELEASE_MODELS_JSON, indent=2, ensure_ascii=False),
+        json.dumps({"models": release_models}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     print(f"  Wrote {models_json_path}")
 
-    # Copy model definition + weights
-    src_unet = ROOT / "model" / "unet_v3"
-    for name in ("unet_v3.py", "unet_v3_weights.pth"):
-        src = src_unet / name
-        dst = unet_dst / name
-        if src.exists():
-            shutil.copy2(src, dst)
-            size_mb = src.stat().st_size / (1024 * 1024)
-            print(f"  Copied {name} ({size_mb:.1f} MB)")
-        else:
-            print(f"  WARNING: {src} not found, skipping")
+    for model_entry in release_models:
+        module = model_entry["module"]
+        src_model_dir = ROOT / "model" / module
+        dst_model_dir = model_dst / module
+        dst_model_dir.mkdir(exist_ok=True)
+        (dst_model_dir / "__init__.py").write_text("", encoding="utf-8")
+
+        # Copy model definition
+        def_file = Path(model_entry["definition"]).name
+        def_src = src_model_dir / def_file
+        shutil.copy2(def_src, dst_model_dir / def_file)
+        print(f"  Copied {def_file}")
+
+        # Copy weights
+        for w in model_entry.get("weights", []):
+            w_file = Path(w).name
+            w_src = src_model_dir / w_file
+            shutil.copy2(w_src, dst_model_dir / w_file)
+            size_mb = w_src.stat().st_size / (1024 * 1024)
+            print(f"  Copied {w_file} ({size_mb:.1f} MB)")
 
     # Remove any stale config from previous builds
     config_dir = dist_dir / "config"

@@ -18,6 +18,8 @@ cd frontend && npm run dev
 # Open http://localhost:5173
 ```
 
+Note: `uv sync` installs Python dependencies. For the frontend, `dev.bat` runs `npm install` automatically on first launch.
+
 ## Coding Rules
 
 - No Chinese (or any non-English) text in project files. All comments, docstrings, labels, and documentation must be written in English.
@@ -36,11 +38,11 @@ EHT_Analytica/
 │   ├── models/schemas.py       # Pydantic request/response models
 │   ├── services/
 │   │   ├── video_service.py    # Video session management (metadata + first frame, single cap.open)
-│   │   ├── tracking_service.py # Model loading + tracking execution (direct in-process inference)
+│   │   ├── tracking_service.py # Model loading + tracking (direct in-process inference, target_size propagation)
 │   │   ├── analysis_service.py # Analysis pipeline (LengthDataAnalyzer wrapper)
 │   │   ├── job_config.py       # Job config CRUD (<video-dir>/EHT-analytics/config.json)
 │   │   └── task_manager.py     # Async task lifecycle + SSE progress push
-│   └── utils/config.py         # Persistent app config (track_model_name, dir history, roi_names)
+│   └── utils/config.py         # Persistent app config (atomic writes via tempfile+os.replace)
 ├── frontend/                   # Vue 3 frontend (Vite)
 │   └── src/
 │       ├── App.vue             # Root component: Track/Analyze/Reports tabs, auto model load
@@ -65,13 +67,11 @@ EHT_Analytica/
 │   ├── configs/                 # Training hyperparameter configs
 │   └── model/                   # Per-model training manifests
 ├── model/                       # Production inference models
-│   ├── models.json              # Central model registry (name, display_name, weights, classes)
-├── model/unet_v2/               # U-Net v2 tracking model (5-model ensemble, 512×512)
-│   ├── unet_v2.py               # Model definition + load_model(weight_paths, device) -> EHTTracker
-│   └── unet_v2_R*_weights.pth   # 5 pure weight files (state_dict only)
+│   ├── models.json              # Central model registry (name, display_name, weights, target_size)
+├── model/unet_v2/               # U-Net v2 (gitignored — superseded by v3, 5-model ensemble, 512×512)
 ├── model/unet_v3/               # U-Net v3 tracking model (single model, 256×256)
 │   ├── unet_v3.py               # Model definition + load_model(weight_paths, device) -> EHTTracker
-│   └── unet_v3_weights.pth      # Pure model weights (state_dict only)
+│   └── unet_v3_weights.pth      # Pure model weights (state_dict only, tracked in git)
 ├── config/                     # Persistent app config
 │   └── app_config.json         # (gitignored) track_model_name, dir history, roi_names
 ├── build/                      # PyInstaller packaging scripts
@@ -175,6 +175,23 @@ Click Save (auto) ──(analyze/save)──→ write:
 
 ## Configuration Files
 
+### model/models.json (model registry, tracked in git)
+```json
+{
+  "models": [{
+    "name": "unet_v3",
+    "display_name": "EHT Tracker v3",
+    "description": "...",
+    "definition": "unet_v3/unet_v3.py",
+    "weights": ["unet_v3/unet_v3_weights.pth"],
+    "load_function": "load_model",
+    "module": "unet_v3",
+    "target_size": 256
+  }]
+}
+```
+Key fields: `name` (internal ID), `definition` (path to model .py), `weights` (paths to .pth files, relative to model/), `target_size` (input resolution, propagated to tracking metadata and inference collection).
+
 ### config/app_config.json (application-level, gitignored)
 ```json
 {
@@ -238,6 +255,62 @@ Click Save (auto) ──(analyze/save)──→ write:
 - ROI name: user-defined, default "EHT-{n}"
 - CSV naming: `{sample_id}_{recording}_{roi_name}_{type}.csv`
 - Job directory: always `EHT-analytics/` co-located with the video
+
+## Launcher & Heartbeat
+
+`backend/launcher.py` starts uvicorn in a daemon thread, then opens the frontend:
+1. **pywebview** (native window) — tried first; falls back to system browser on `ImportError` or runtime failure.
+2. **System browser** (`_fallback_browser`) — opens `http://127.0.0.1:9876`, then runs a watchdog loop that exits the process when the browser tab is closed.
+
+`backend/services/heartbeat.py` provides the close-detection mechanism:
+- `HeartbeatMonitor` starts **dead** (`_last_beat = _UNSET = 0.0`); `is_alive()` returns `False` until the first `beat()`.
+- The frontend pings `/api/system/heartbeat` every 3 s.
+- The launcher calls `beat()` after an 8 s grace period to activate the monitor.
+- If no beat arrives within 5 s, the watchdog calls `sys.exit(0)`.
+
+## Release Build
+
+Build the self-contained release package:
+
+```bash
+uv run python build/build.py
+```
+
+### Build pipeline (3 stages)
+
+1. **Frontend build** — `npm run build` outputs to `frontend/dist/` (includes `public/` static assets like `logo.ico`)
+2. **PyInstaller** — packages `backend/`, `frontend/dist/`, `functions/`, `training/` into `dist/EHT_Analytica/` with a single `.exe` entry point
+3. **Model assembly** — copies model definitions + weights into `dist/EHT_Analytica/model/` based on `model/models.json` registry
+
+### Output structure
+
+```
+dist/EHT_Analytica/
+├── EHT_Analytica.exe          # Entry point (icon embedded from img/logo.ico)
+├── model/
+│   ├── models.json            # Filtered registry (release models only)
+│   └── <module>/              # Per-model .py + .pth files
+├── frontend_dist/             # Built Vue frontend (served as static files)
+├── functions/                 # Pure Python functions
+├── backend/                   # FastAPI backend
+└── _internal/                 # PyInstaller runtime
+```
+
+### Model exclusion
+
+`build/build.py` has an `EXCLUDE_MODELS` set that controls which models are packaged:
+
+```python
+EXCLUDE_MODELS = {"unet_v2"}
+```
+
+**unet_v2 is permanently excluded from release builds** — it is superseded by unet_v3. Its weights are gitignored and the 5-model ensemble (~148 MB) would bloat the release package. To exclude additional models, add their registry `name` to this set.
+
+### Release checklist
+
+- `img/logo.ico` must exist at project root for the `.exe` icon (file is gitignored; keep a copy outside the repo)
+- `model/unet_v3/unet_v3_weights.pth` must exist (tracked in git)
+- Run `build/build.py` from the project root with the uv-managed venv active
 
 ## Development Environment
 

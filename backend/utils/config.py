@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -49,10 +50,26 @@ def _migrate_old_config() -> dict:
 
 
 def _write_config(data: dict) -> None:
-    _config_file_path().write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    """Write config atomically using tempfile + os.replace."""
+    cf = _config_file_path()
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8",
+        dir=cf.parent, delete=False,
+        suffix=".tmp", prefix="app_config_",
     )
+    try:
+        tmp.write(json.dumps(data, indent=2, ensure_ascii=False))
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp.close()
+        os.replace(tmp.name, str(cf))
+    except Exception:
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 def load_path(key: str) -> str | None:
@@ -103,7 +120,6 @@ def save_model_name(model_name: str) -> None:
 
 def _derive_model_name_from_path(path: str) -> str | None:
     """Guess model name from old track_model absolute path."""
-    import os
     norm = os.path.normpath(path).replace("\\", "/").lower()
     if "/unet_v3/" in norm or norm.endswith("/unet_v3"):
         return "unet_v3"

@@ -22,6 +22,7 @@ _loaded_model = None             # EHTTracker object (direct in-process)
 _loaded_model_name: str | None = None         # e.g. "unet_v3"
 _loaded_model_device: str | None = None       # e.g. "cuda" or "cpu"
 _loaded_model_display_name: str | None = None # e.g. "EHT Tracker v3"
+_loaded_model_target_size: int = 256          # from models.json, defaults to 256
 
 
 def get_model_status() -> dict:
@@ -36,12 +37,12 @@ def get_model_status() -> dict:
 
 def load_model_async(model_name: str) -> str:
     """Load a model directly in-process for the given model name. Returns task_id."""
-    global _loaded_model, _loaded_model_name, _loaded_model_device, _loaded_model_display_name
+    global _loaded_model, _loaded_model_name, _loaded_model_device, _loaded_model_display_name, _loaded_model_target_size
 
     tid = task_manager.create("model_load")
 
     def worker():
-        global _loaded_model, _loaded_model_name, _loaded_model_device, _loaded_model_display_name
+        global _loaded_model, _loaded_model_name, _loaded_model_device, _loaded_model_display_name, _loaded_model_target_size
         try:
             task_manager.update(tid, 5, "Reading models.json...")
 
@@ -104,6 +105,7 @@ def load_model_async(model_name: str) -> str:
             _loaded_model_name = model_name
             _loaded_model_device = str(device)
             _loaded_model_display_name = display_name
+            _loaded_model_target_size = entry.get("target_size", 256)
 
             save_model_name(model_name)
             task_manager.complete(tid, {
@@ -128,7 +130,11 @@ def start_tracking(video_id: str, rois: list[dict], output_folder: str,
     if _loaded_model is None:
         raise ValueError("No model loaded")
 
+    # Snapshot model metadata at task start.
+    # The model object itself (_loaded_model) is accessed directly in the
+    # worker closure via infer_fn — it must not be swapped mid-task.
     model_name = _loaded_model_name
+    target_size = _loaded_model_target_size
 
     sess = get_session(video_id)
     if sess is None:
@@ -151,8 +157,6 @@ def start_tracking(video_id: str, rois: list[dict], output_folder: str,
 
     def worker():
         try:
-            torch.set_num_threads(torch.get_num_threads())
-
             def progress_cb(current, total, message):
                 pct = (current / total * 100) if total > 0 else 0
                 task_manager.update(tid, min(pct, 100), message)
@@ -182,6 +186,7 @@ def start_tracking(video_id: str, rois: list[dict], output_folder: str,
                 save_tracked_video=save_tracked_video,
                 save_inferences=save_inferences,
                 model_name=model_name,
+                target_size=target_size,
             )
 
             if result.get("success"):

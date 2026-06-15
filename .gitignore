@@ -27,10 +27,8 @@ Thumbs.db
 # Logs
 *.log
 
-# Model weights (large binary files)
-*.pth
-*.pt
-!model/models.json
+# Legacy model (superseded by unet_v3)
+model/unet_v2/
 
 # Generated images
 img/
@@ -40,3 +38,6 @@ img/
 
 # track model training
 training/
+
+# Test data / analysis outputs
+test/

@@ -1,9 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Ensure uv and nodejs are on PATH (in case not in system PATH)
-set "PATH=D:\uv;D:\nodejs;%PATH%"
-
 :: Use current script directory as project root (portable across machines)
 set "PROJECT_DIR=%~dp0"
 
@@ -19,11 +16,11 @@ echo ==========================================
 echo.
 
 echo Killing any process on port 9876 ...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:"127.0.0.1:9876.*LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":9876"') do (
     echo   Killing PID %%a
     taskkill /F /PID %%a >nul 2>&1
 )
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:"0.0.0.0:5173.*LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173"') do (
     echo   Killing PID %%a
     taskkill /F /PID %%a >nul 2>&1
 )
@@ -35,7 +32,7 @@ if not exist "%PROJECT_DIR%.venv\" (
     cd /d "%PROJECT_DIR%"
     uv sync
     if errorlevel 1 (
-        echo ERROR: uv sync failed. Is uv installed? Check D:\uv is on PATH.
+        echo ERROR: uv sync failed. Is uv installed and on PATH?
         pause
         exit /b 1
     )

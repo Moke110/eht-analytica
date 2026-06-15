@@ -283,6 +283,13 @@ const COLORS = [
   '#0891b2', '#e11d48', '#65a30d', '#d97706', '#4f46e5',
 ]
 
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 const canAnalyze = computed(() =>
   selectedIds.value.size > 0 &&
   samples.value.some(a => selectedIds.value.has(a.id) && a.length_csv)
@@ -388,6 +395,7 @@ async function loadChartData() {
       const cols = f.columns.map(c => c.trim().toLowerCase())
       const tIdx = cols.indexOf('time')
       const fIdx = cols.indexOf('force')
+      const sIdx = cols.indexOf('status')
       if (tIdx < 0 || fIdx < 0) continue
 
       const points = []
@@ -395,7 +403,8 @@ async function loadChartData() {
         const t = parseFloat(row[tIdx])
         const force = parseFloat(row[fIdx])
         if (isNaN(t) || isNaN(force)) continue
-        points.push({ x: t, y: force })
+        const status = sIdx >= 0 ? (row[sIdx] || '').trim().toLowerCase() : ''
+        points.push({ x: t, y: force, status })
         if (t > globalMaxT) globalMaxT = t
       }
       if (points.length) {
@@ -405,15 +414,26 @@ async function loadChartData() {
 
     // Use the max time across ALL selected as x-axis range
     for (let i = 0; i < parsed.length; i++) {
+      const color = COLORS[i % COLORS.length]
       datasets.push({
         label: parsed[i].label,
         data: parsed[i].points,
-        borderColor: COLORS[i % COLORS.length],
-        backgroundColor: COLORS[i % COLORS.length] + '20',
+        borderColor: color,
+        backgroundColor: color + '20',
         borderWidth: 1.5,
         pointRadius: 0,
         fill: false,
         tension: 0,
+        segment: {
+          borderColor: (ctx) => {
+            const s0 = ctx.p0.raw?.status
+            const s1 = ctx.p1.raw?.status
+            if (s0 === 'rest' || s1 === 'rest') {
+              return hexToRgba(color, 0.5)
+            }
+            return color
+          },
+        },
       })
     }
 

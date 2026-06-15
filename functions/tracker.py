@@ -40,7 +40,8 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
                      total_frames_hint: int | None = None, frame_buffer: list | None = None,
                      save_tracked_video: bool = False,
                      save_inferences: bool = False,
-                     model_name: str | None = None):
+                     model_name: str | None = None,
+                     target_size: int = 256):
     """
     Process video tracking for each ROI and save one length CSV per ROI.
 
@@ -70,6 +71,8 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
     save_tracked_video : bool
     save_inferences : bool
     model_name : str, optional
+    target_size : int
+        Model input resolution (256 for v3, 512 for v2). Stored in inference metadata.
 
     Returns
     -------
@@ -187,7 +190,7 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
                             roi_gray=roi_images[i],
                             coords=coords,
                             model_name=model_name or "unknown",
-                            target_size=256,
+                            target_size=target_size,
                             recording_dir=recording_dir,
                             recording=recording_name,
                             roi_name=roi['name'],

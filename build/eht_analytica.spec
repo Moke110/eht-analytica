@@ -14,6 +14,7 @@ a = Analysis(
     datas=[
         (str(_root / 'frontend' / 'dist'), 'frontend_dist'),
         (str(_root / 'functions'), 'functions'),
+        (str(_root / 'training'), 'training'),
         (str(_root / 'backend'), 'backend'),
     ],
     hiddenimports=[
@@ -23,6 +24,7 @@ a = Analysis(
         'cv2', 'numpy', 'pandas', 'torch',
         'PIL', 'tkinter', 'tkinter.filedialog',
         'model.unet_v3.unet_v3',
+        'training.src.dataset.inference_collector',
     ],
     hookspath=[],
     hooksconfig={},
@@ -43,6 +45,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    icon=str(_root / 'img' / 'logo.ico'),
     console=False,
     disable_windowed_tracked=False,
     argv_emulation=False,

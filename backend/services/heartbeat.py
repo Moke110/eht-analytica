@@ -1,7 +1,7 @@
 """Browser-close detection via frontend heartbeat.
 
 The frontend pings ``/api/system/heartbeat`` every 3 s.  If no beat arrives
-for 5 s the launcher watchdog calls ``os._exit(0)`` to terminate the process.
+for 5 s the launcher watchdog shuts down the process.
 """
 
 from __future__ import annotations
@@ -11,10 +11,17 @@ import time
 
 
 class HeartbeatMonitor:
-    """Thread-safe heartbeat tracker."""
+    """Thread-safe heartbeat tracker.
+
+    Starts dead (``is_alive()`` returns False) until the first ``beat()``
+    call. Callers that construct the monitor before the heartbeat source is
+    ready must call ``beat()`` to activate it.
+    """
+
+    _UNSET: float = 0.0  # sentinel: monitor is dead until first beat()
 
     def __init__(self, timeout: float = 5.0) -> None:
-        self._last_beat: float = time.time()
+        self._last_beat: float = self._UNSET
         self._timeout: float = timeout
         self._lock: threading.Lock = threading.Lock()
 
