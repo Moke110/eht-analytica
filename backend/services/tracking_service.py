@@ -94,7 +94,7 @@ def load_model_async(model_name: str) -> str:
 
             # Unload previous model if any
             if _loaded_model is not None:
-                del _loaded_model
+                _loaded_model = None
                 if device.type == "cuda":
                     torch.cuda.empty_cache()
 
