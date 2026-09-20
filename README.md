@@ -72,3 +72,7 @@ python build/build.py        # PyInstaller build → dist/
 ```
 
 The build script reads `model/models.json` and includes all models whose weight files exist — it is model-agnostic rather than hardcoded to a specific version.
+
+## License
+
+Released under the [MIT License](LICENSE).
