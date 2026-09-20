@@ -28,7 +28,14 @@ def get_model_dir() -> Path:
 
 
 def get_config_dir() -> Path:
-    """``<app_root>/config`` — persistent app config (writable)."""
+    """Directory for the persistent app config (writable).
+
+    - Frozen on macOS: ``~/Library/Application Support/EHT_Analytica``
+      (the .app bundle may be read-only or replaced on update).
+    - Otherwise: ``<app_root>/config``.
+    """
+    if getattr(sys, 'frozen', False) and sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "EHT_Analytica"
     return get_app_root() / "config"
 
 

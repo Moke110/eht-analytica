@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Python dependencies (CPU torch)
+        run: |
+          uv venv --python 3.12
+          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -r requirements.txt
+
+      - name: Build package
+        run: uv run --no-sync python build/build.py
+
+      - name: Smoke test
+        run: uv run --no-sync python build/smoke_test.py
+
+      - name: Create archive (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/EHT_Analytica -DestinationPath "EHT_Analytica-Windows-${{ github.ref_name }}.zip"
+          Get-Item "EHT_Analytica-Windows-${{ github.ref_name }}.zip" | Select-Object Name, Length
+
+      - name: Create archive (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          cd dist
+          ditto -c -k --keepParent EHT_Analytica "../EHT_Analytica-macOS-${{ github.ref_name }}.zip"
+          ls -lh "../EHT_Analytica-macOS-${{ github.ref_name }}.zip"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EHT_Analytica-*.zip
+          body: |
+            ## Downloads
+
+            | File | Platform | Notes |
+            |------|----------|-------|
+            | `EHT_Analytica-Windows-*.zip` | Windows 10/11 (x64) | Extract and run `EHT_Analytica.exe` |
+            | `EHT_Analytica-macOS-*.zip` | macOS 14+ (Apple Silicon) | See note below |
+
+            **Note**: Builds are CPU-only for portability. For NVIDIA GPU support,
+            [build from source](https://github.com/Moke110/EHT_Analytica#readme) with CUDA-enabled PyTorch.
+
+            ### macOS first launch (unsigned app)
+
+            The app is not code-signed. After extracting, right-click
+            `EHT_Analytica.app` and choose **Open**, or run:
+
+            ```bash
+            xattr -cr /path/to/EHT_Analytica.app
+            ```

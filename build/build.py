@@ -26,13 +26,17 @@ def build_frontend() -> None:
         return
 
     step("Building Vue frontend...")
-    # Resolve npm: try PATH first, then common install locations
-    npm_exe = "npm"
-    for node_path in [r"D:\nodejs", r"C:\Program Files\nodejs"]:
-        candidate = os.path.join(node_path, "npm.cmd")
-        if os.path.isfile(candidate):
-            npm_exe = candidate
-            break
+    # Resolve npm: PATH first (works on Windows/macOS/Linux, incl. CI runners),
+    # then common Windows install locations
+    npm_exe = shutil.which("npm")
+    if npm_exe is None:
+        for node_path in [r"D:\nodejs", r"C:\Program Files\nodejs"]:
+            candidate = os.path.join(node_path, "npm.cmd")
+            if os.path.isfile(candidate):
+                npm_exe = candidate
+                break
+    if npm_exe is None:
+        npm_exe = "npm"
     subprocess.run([npm_exe, "install"], cwd=str(frontend_dir), check=True)
     subprocess.run([npm_exe, "run", "build"], cwd=str(frontend_dir), check=True)
     print(f"  Frontend built -> {frontend_dir / 'dist'}")
@@ -54,7 +58,15 @@ def assemble_release() -> None:
     step("Assembling release folder...")
 
     dist_dir = ROOT / "dist" / "EHT_Analytica"
-    model_dst = dist_dir / "model"
+
+    # macOS: PyInstaller emits an .app bundle; the executable lives at
+    # Contents/MacOS/, and paths.py resolves app_root from the executable.
+    # Windows/Linux: flat folder with the exe at the root.
+    if sys.platform == "darwin":
+        app_root_dst = dist_dir / "EHT_Analytica.app" / "Contents" / "MacOS"
+    else:
+        app_root_dst = dist_dir
+    model_dst = app_root_dst / "model"
 
     # Models excluded from release builds
     EXCLUDE_MODELS = {"unet_v2"}
@@ -120,7 +132,7 @@ def assemble_release() -> None:
             print(f"  Copied {w_file} ({size_mb:.1f} MB)")
 
     # Remove any stale config from previous builds
-    config_dir = dist_dir / "config"
+    config_dir = app_root_dst / "config"
     if config_dir.exists():
         shutil.rmtree(config_dir)
         print("  Removed stale config/ from build")

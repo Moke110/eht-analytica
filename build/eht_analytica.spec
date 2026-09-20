@@ -61,3 +61,15 @@ coll = COLLECT(
     upx_exclude=[],
     name='EHT_Analytica',
 )
+
+if sys.platform == 'darwin':
+    bundle = BUNDLE(
+        coll,
+        name='EHT_Analytica.app',
+        bundle_identifier='com.moke110.eht-analytica',
+        info_plist={
+            'CFBundleDisplayName': 'EHT Analytica',
+            'CFBundleShortVersionString': '0.3.0',
+            'NSHighResolutionCapable': True,
+        },
+    )

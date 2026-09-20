@@ -7,14 +7,10 @@ import tempfile
 from pathlib import Path
 
 
-def _get_repo_root() -> Path:
-    from backend.utils.paths import get_app_root
-    return get_app_root()
-
-
 def _config_dir() -> Path:
-    p = _get_repo_root() / "config"
-    p.mkdir(exist_ok=True)
+    from backend.utils.paths import get_config_dir
+    p = get_config_dir()
+    p.mkdir(parents=True, exist_ok=True)
     return p
 
 

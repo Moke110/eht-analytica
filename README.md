@@ -73,6 +73,12 @@ python build/build.py        # PyInstaller build → dist/
 
 The build script reads `model/models.json` and includes all models whose weight files exist — it is model-agnostic rather than hardcoded to a specific version.
 
+## Download
+
+Prebuilt packages for Windows and macOS (Apple Silicon) are available on the
+[Releases](https://github.com/Moke110/EHT_Analytica/releases) page. Release builds
+are CPU-only; build from source for NVIDIA GPU support.
+
 ## License
 
 Released under the [MIT License](LICENSE).

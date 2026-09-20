@@ -33,6 +33,10 @@ Thumbs.db
 # Legacy model (superseded by unet_v3)
 model/unet_v2/
 
+# Legacy large artifacts (stripped from git history; never re-add)
+model/track_unet_v2/
+src/test/
+
 # Generated images
 img/
 

@@ -13,6 +13,7 @@ dependencies = [
     "opencv-python",
     "torch>=2.0",
     "scipy>=1.0",
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
