@@ -3,7 +3,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-uv.lock
 
 # Frontend build
 frontend/dist/
@@ -11,7 +10,11 @@ frontend/node_modules/
 
 # Build artifacts
 build/dist/
+build/eht_analytica/
 dist/
+
+# Agent development docs (not part of the released project)
+docs/
 
 # Config (user-specific)
 config/app_config.json

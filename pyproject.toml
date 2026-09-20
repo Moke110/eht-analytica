@@ -1,6 +1,6 @@
 [project]
 name = "EHT_Analytica"
-version = "0.2.0"
+version = "0.3.0"
 description = "A deep learning EHT contraction analysis tool"
 authors = [{ name = "Chang Wang", email = "changwangbj02@gmail.com" }]
 requires-python = ">=3.10"
