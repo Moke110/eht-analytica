@@ -7,7 +7,7 @@ from typing import Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
-from scipy.signal import find_peaks, savgol_filter
+from scipy.signal import savgol_filter
 from scipy.stats import gaussian_kde
 
 
@@ -19,7 +19,7 @@ class LengthDataAnalyzer:
 	- Unify to minimal time interval via linear interpolation.
 	- Compute features (v_left, v_right, v, a, l_dev) normalized to [-1, 1].
 	- Convert length to force using calibrated constants.
-	- Identify peaks and movement spans (contraction/relaxation) with burst rest labeling.
+	- Identify peaks and movement spans (contraction/relaxation).
 	- Segment cycles and compute t80 metrics.
 	- Analyze dataset-level metrics and return/save results.
 
@@ -40,14 +40,14 @@ class LengthDataAnalyzer:
 	# Force-derivative classifier constants
 	SG_WINDOW_SEC = 0.05          # Savitzky-Golay filter window (seconds)
 	SG_ORDER = 2                  # Savitzky-Golay polynomial order
-	PEAK_PROMINENCE_FRAC = 0.08   # Min peak prominence as fraction of force range
+	PEAK_PROMINENCE_FRAC = 0.10   # Min peak prominence as fraction of force range
 	PEAK_MIN_DIST_SEC = 0.08      # Min distance between peaks (seconds)
-	PEAK_MAX_WIDTH_SEC = 0.5      # Max peak width at half-prominence (seconds)
 	DF_THRESHOLD_FRAC = 0.015      # Derivative threshold as fraction of (force_range / dt)
 	F_REST_THRESHOLD = 0.05       # Force within 5% of baseline range → candidate rest
-	MIN_SEGMENT_SAMPLES = 3       # Minimum consecutive samples to keep a state segment
+	MIN_SEGMENT_SAMPLES = 5       # Minimum consecutive samples to keep a state segment
 	REST_TIMEOUT_SEC = 0.2        # Max time after relaxation reaches baseline before forcing rest
-	BURST_MAX_INTERVAL_SEC = 1.5  # Max peak interval for burst rest labelling
+	MIN_FORCE_RANGE = 0.025       # Minimum force range (N) to consider as active contraction
+	MIN_DIASTOLIC_SEGMENTS = 3   # Minimum relaxation segments to compute diastolic interval
 
 	def _ensure_time_length_df(self, df: pd.DataFrame) -> pd.DataFrame:
 		original_columns = list(df.columns)
@@ -152,14 +152,11 @@ class LengthDataAnalyzer:
 	def classify_states(self, force_df: pd.DataFrame, dt: float) -> pd.DataFrame:
 		"""Single-pass force-derivative state classifier.
 
-		Replaces the old identify_peaks + identify_move_on_peaks pipeline with a
-		robust algorithm that works directly on the force-time signal using:
-		  - Savitzky-Golay smoothing + gradient for derivative
-		  - KDE mode for adaptive baseline detection
-		  - scipy.signal.find_peaks for peak detection
-		  - Derivative sign + force distance from baseline for state assignment
+		Uses Savitzky-Golay smoothing, derivative sign, adaptive baseline detection
+		(KDE mode), and contraction->relaxation transition peak detection with
+		local-maximum prominence validation.
 
-		States: 'rest', 'contraction', 'peak', 'relaxation', 'burst rest'
+		States: 'rest', 'contraction', 'peak', 'relaxation'
 		"""
 		if force_df is None or force_df.empty:
 			raise ValueError('force_df must be a non-empty DataFrame.')
@@ -187,53 +184,34 @@ class LengthDataAnalyzer:
 			x_grid = np.linspace(float(np.min(forces)), float(np.max(forces)), 500)
 			baseline = float(x_grid[np.argmax(kde(x_grid))])
 		except Exception:
-			# Fallback: histogram mode
 			hist, edges = np.histogram(forces, bins=min(100, n // 10))
 			baseline = float((edges[np.argmax(hist)] + edges[np.argmax(hist) + 1]) / 2.0)
 
 		f_range = float(np.max(forces) - np.min(forces))
-		if f_range < 1e-12:
-			# Flat signal — everything is rest
+		if f_range < self.MIN_FORCE_RANGE:
 			result = force_df.copy()
 			result['status'] = 'rest'
 			return result
 
-		# ---- Phase 3: Peak detection ----
-		prominence = max(self.PEAK_PROMINENCE_FRAC * f_range, f_range * 0.01)
-		distance = max(1, int(self.PEAK_MIN_DIST_SEC / dt))
-		width_min = max(1, int(0.01 / dt))  # min width ~10ms
-		width_max = int(self.PEAK_MAX_WIDTH_SEC / dt)
-		peak_indices, peak_props = find_peaks(
-			f_smooth, prominence=prominence, distance=distance,
-			width=(width_min, width_max) if width_max > width_min else 1,
-		)
-
-		# ---- Phase 4: Derivative noise estimation from baseline region ----
-		# Use a wider window around baseline for robust noise estimation (15% of range)
+		# ---- Phase 3: Derivative noise estimation (MAD-based) ----
 		noise_window = 0.15 * f_range
 		near_baseline_mask = np.abs(forces - baseline) < noise_window
 		if near_baseline_mask.sum() > 20:
-			# Use median absolute deviation (MAD) for robustness against outliers
 			base_df = df_dt[near_baseline_mask]
 			mad = float(np.median(np.abs(base_df - np.median(base_df))))
-			noise_std = mad * 1.4826  # MAD → std conversion for normal distribution
+			noise_std = mad * 1.4826  # MAD -> std for normal distribution
 		else:
 			noise_std = float(np.std(df_dt))
 
-		# Adaptive derivative threshold:
-		# Primary: fraction of (range/dt).  Noise floor: at most 5× noise_std
-		# (capped to prevent noisy signals from drowning out real contractions)
+		# Adaptive derivative threshold (capped noise floor)
 		df_threshold = max(
 			self.DF_THRESHOLD_FRAC * f_range / dt,
 			min(3.0 * noise_std, 0.5 * self.DF_THRESHOLD_FRAC * f_range / dt),
 		)
-		# Rest margin around baseline (absolute force units)
 		rest_margin = self.F_REST_THRESHOLD * f_range
 
-		# ---- Phase 5: State assignment ----
+		# ---- Phase 4: State assignment by derivative sign ----
 		status = np.full(n, '', dtype=object)
-
-		# Pass 1: assign contraction / relaxation / rest by derivative
 		for i in range(n):
 			if df_dt[i] > df_threshold:
 				status[i] = 'contraction'
@@ -244,90 +222,145 @@ class LengthDataAnalyzer:
 			else:
 				status[i] = 'rest'
 
-		# Pass 2: detect peaks at contraction→relaxation transitions.
-		# At the peak, dF/dt crosses zero, so the zero-crossing point(s) may be
-		# labeled 'rest' (force above baseline, derivative flat). We look for
-		# contraction→[optional short rest]→relaxation and label the force
-		# maximum in that window as the peak.
+		# ---- Phase 4.5: Diastolic interval override ----
+		# Compute the diastolic force range from relaxation segment minima and
+		# force all points whose force falls within it to 'rest', regardless of
+		# derivative sign.  This suppresses noise-induced misclassification in
+		# the diastolic (relaxed) band.
+		diastolic_lower, diastolic_upper = self._compute_diastolic_interval(
+			status, forces, baseline, f_range, rest_margin,
+		)
+		diastolic_mask = (forces >= diastolic_lower) & (forces <= diastolic_upper)
+		status[diastolic_mask] = 'rest'
+
+		# ---- Phase 4b: Merge short segments BEFORE peak detection ----
+		# Absorb noise-induced tiny contraction/relaxation segments into the
+		# surrounding state so they don't produce spurious peaks.
+		status = self._merge_short_segments(status, self.MIN_SEGMENT_SAMPLES)
+
+		# ---- Phase 5: Peak detection at contraction->relaxation boundary ----
+		# Place exactly one peak per contraction-relaxation transition, then skip
+		# the entire relaxation segment + a minimum distance.  Each candidate is
+		# validated for local-maximum prominence to filter out noisy zero-crossings.
 		is_peak = np.zeros(n, dtype=bool)
+		peak_min_dist_samples = max(1, int(self.PEAK_MIN_DIST_SEC / dt))
+		min_prominence = self.PEAK_PROMINENCE_FRAC * f_range
+		prominence_window = max(2, int(0.10 / dt))  # ~100 ms each side
+		last_peak_idx = -peak_min_dist_samples
 		i = 1
 		while i < n:
-			if status[i-1] == 'contraction' and status[i] in ('relaxation', 'rest'):
-				# Found potential contraction end. Find where relaxation starts.
+			if status[i - 1] == 'contraction' and status[i] in ('relaxation', 'rest'):
 				relax_start = i
 				while relax_start < n and status[relax_start] == 'rest':
 					relax_start += 1
 				if relax_start >= n or status[relax_start] != 'relaxation':
 					i = relax_start
 					continue
-
-				# We have: contraction → [rest]*k → relaxation
-				# Rest gap must be short (≤3 samples — ~30ms at 100Hz)
 				gap_len = relax_start - i
 				if gap_len > 3:
 					i = relax_start
 					continue
 
-				# Find the maximum force point from the last contraction through the gap
+				# Locate the force maximum in the transition window
 				search_start = max(0, i - 1)
 				while search_start > 0 and status[search_start] == 'contraction':
 					search_start -= 1
-				search_start = max(0, search_start)
 				search_end = min(n, relax_start + 1)
-
 				best_j = search_start + int(np.argmax(forces[search_start:search_end]))
-				if forces[best_j] >= baseline + 0.05 * f_range:
-					is_peak[best_j] = True
 
-				i = relax_start + 1
+				# ---- Validate candidate peak ----
+				valid = False
+				if forces[best_j] >= baseline + 0.05 * f_range and (best_j - last_peak_idx) >= peak_min_dist_samples:
+					# Local-maximum check
+					vl = max(0, best_j - prominence_window)
+					vr = min(n, best_j + prominence_window + 1)
+					if forces[best_j] >= np.max(forces[vl:vr]):
+						# Prominence check: force drop on both sides
+						left_min = float(np.min(forces[vl:best_j])) if best_j > vl else forces[best_j]
+						right_min = float(np.min(forces[best_j:vr])) if vr > best_j else forces[best_j]
+						if (forces[best_j] - left_min) >= min_prominence and (forces[best_j] - right_min) >= min_prominence:
+							valid = True
+
+				if valid:
+					is_peak[best_j] = True
+					last_peak_idx = best_j
+
+				# Skip the entire relaxation segment + enforce minimum peak distance
+				i = relax_start
+				while i < n and status[i] == 'relaxation':
+					i += 1
+				i = max(i, last_peak_idx + peak_min_dist_samples)
 			else:
 				i += 1
 
-		# Apply peak labels (overwrites the underlying contraction/relaxation at that point)
-		for i in range(n):
-			if is_peak[i]:
-				status[i] = 'peak'
+		for j in range(n):
+			if is_peak[j]:
+				status[j] = 'peak'
 
 		# ---- Phase 6: Post-processing ----
-		# Build combined peak index array (sorted) for burst-rest labelling
-		all_peak_idx = np.flatnonzero(is_peak)
-		all_peak_idx.sort()
-
-		# If derivative-based detection found zero peaks, fall back to find_peaks
-		if all_peak_idx.size == 0 and peak_indices.size > 0:
-			min_peak_height = baseline + 0.10 * f_range
-			for p in peak_indices:
-				if forces[p] >= min_peak_height:
-					is_peak[p] = True
-					status[p] = 'peak'
-			all_peak_idx = np.flatnonzero(is_peak)
-			all_peak_idx.sort()
-
-		# (a) Merge short segments. Peak segments (single-point) are preserved
-		#     by _merge_short_segments — it never absorbs 'peak'.
-		status = self._merge_short_segments(status, self.MIN_SEGMENT_SAMPLES)
-
-		# (b) Burst rest: rest segments between peaks closer than BURST_MAX_INTERVAL_SEC
-		if all_peak_idx.size >= 2:
-			all_peak_times = times[all_peak_idx]
-			for p_idx in range(len(all_peak_idx) - 1):
-				p_time = all_peak_times[p_idx]
-				next_time = all_peak_times[p_idx + 1]
-				interval = next_time - p_time
-				if interval < self.BURST_MAX_INTERVAL_SEC:
-					mask_between = (times > p_time) & (times < next_time)
-					rest_mask = (status == 'rest')
-					label_mask = mask_between & rest_mask
-					if np.any(label_mask):
-						status[label_mask] = 'burst rest'
-
-		# (c) Cut off stale relaxation: force has been near baseline for too long
+		# Cut off stale relaxation
 		status = self._cutoff_stale_relaxation(times, forces, status, baseline,
 		                                       rest_margin, self.REST_TIMEOUT_SEC, dt)
 
 		result = force_df.copy()
 		result['status'] = status
 		return result
+
+
+	@staticmethod
+	def _compute_diastolic_interval(
+		status: np.ndarray,
+		forces: np.ndarray,
+		baseline: float,
+		f_range: float,
+		rest_margin: float,
+		min_samples: int = 5,
+		min_relax_segments: int = 3,
+	) -> tuple[float, float]:
+		"""Compute the diastolic force interval from relaxation-segment minima.
+
+		1. Scan all 'relaxation' segments.
+		2. For each segment with length >= min_samples, collect its minimum force.
+		3. If fewer than min_relax_segments valid segments exist, fall back to
+		   [baseline - rest_margin, baseline + rest_margin].
+		4. Otherwise, centre the interval on *baseline* with a width derived from
+		   how far relaxation minima deviate from baseline, capped at 10 % of the
+		   total force range to avoid eating into genuine contractions.
+
+		Returns (diastolic_lower, diastolic_upper).
+		"""
+		n = len(status)
+
+		# ---- Collect minima from qualifying relaxation segments ----
+		mins: list[float] = []
+		i = 0
+		while i < n:
+			if status[i] == 'relaxation':
+				seg_start = i
+				while i < n and status[i] == 'relaxation':
+					i += 1
+				seg_len = i - seg_start
+				if seg_len >= min_samples:
+					mins.append(float(np.min(forces[seg_start:i])))
+			else:
+				i += 1
+
+		# ---- Fallback when not enough valid segments ----
+		if len(mins) < min_relax_segments:
+			return (baseline - rest_margin, baseline + rest_margin)
+
+		# ---- Baseline-centred width from relaxation-minima deviations ----
+		mins_arr = np.array(mins)
+		deviations = np.abs(mins_arr - baseline)
+		median_dev = float(np.median(deviations))
+		# Width is at least rest_margin, at most 10 % of total force range
+		width = max(rest_margin, 2.0 * median_dev)
+		width = min(width, 0.10 * f_range)
+
+		diastolic_lower = baseline - width
+		diastolic_upper = baseline + width
+		return (diastolic_lower, diastolic_upper)
+
 
 	@staticmethod
 	def _merge_short_segments(status: np.ndarray, min_samples: int) -> np.ndarray:
