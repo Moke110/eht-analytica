@@ -20,7 +20,6 @@ a = Analysis(
     datas=[
         (str(_root / 'frontend' / 'dist'), 'frontend_dist'),
         (str(_root / 'functions'), 'functions'),
-        (str(_root / 'training'), 'training'),
         (str(_root / 'backend'), 'backend'),
     ],
     hiddenimports=[
@@ -30,7 +29,7 @@ a = Analysis(
         'cv2', 'numpy', 'pandas', 'torch',
         'PIL', 'tkinter', 'tkinter.filedialog',
         'model.unet_v3.unet_v3',
-        'training.src.dataset.inference_collector',
+        'functions.inference_collector',
     ],
     hookspath=[],
     hooksconfig={},

@@ -184,7 +184,7 @@ def process_tracking(video_path, rois, infer_fn, output_folder, progress_callbac
                         and coords.ndim == 2 and coords.shape[0] >= 2 \
                         and frame_idx % 30 == 0:
                     try:
-                        from training.src.dataset.inference_collector import save_sample
+                        from functions.inference_collector import save_sample
                         inferences_dir = os.path.join(output_folder, "inferences")
                         save_sample(
                             roi_gray=roi_images[i],
