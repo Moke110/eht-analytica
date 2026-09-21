@@ -1,0 +1,31 @@
+name: Tcl diagnostic
+
+on:
+  push:
+    paths: ['.github/workflows/diag.yml']
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        py: ['3.14', '3.14.5', '3.13', '3.12']
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      - name: Report Tcl/Tk layout
+        shell: pwsh
+        run: |
+          python -c "import sys, os, tkinter, _tkinter; t=tkinter.Tcl(); lib=t.eval('info library'); print('py', sys.version.split()[0]); print('tcl_library', lib); print('isdir', os.path.isdir(lib)); print('tcl', _tkinter.TCL_VERSION, 'tk', _tkinter.TK_VERSION); print('builtin', getattr(_tkinter,'__file__',None) is None)"
+          python -c "import sys; print('base_prefix', sys.base_prefix)"
+          $root = python -c "import sys; print(sys.base_prefix)"
+          Write-Output '--- dirs matching tcl/tk ---'
+          Get-ChildItem -Path $root -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(tcl|tk)' } |
+            Select-Object -ExpandProperty FullName
+          Write-Output '--- tcl*.dll ---'
+          Get-ChildItem -Path $root -Recurse -Filter 'tcl*.dll' -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
