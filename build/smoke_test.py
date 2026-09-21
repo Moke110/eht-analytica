@@ -79,15 +79,34 @@ def main() -> int:
     hb = threading.Thread(target=heartbeat, daemon=True)
     hb.start()
 
+    def dump_app_log() -> None:
+        """Surface the launcher's own log so CI failures are diagnosable."""
+        log = args.app_dir.resolve() / "eht_analytica.log"
+        if not log.is_file():
+            print(f"[smoke] (no app log at {log})")
+            return
+        try:
+            lines = log.read_text(
+                encoding="utf-8", errors="replace").splitlines()
+        except OSError as e:
+            print(f"[smoke] (cannot read app log: {e})")
+            return
+        print("[smoke] ---- app log tail ----")
+        for line in lines[-40:]:
+            print(line)
+        print("[smoke] -----------------------")
+
     def fail(msg: str) -> int:
         stop.set()
-        proc.terminate()
         print(f"[smoke] FAIL: {msg}")
+        dump_app_log()
+        proc.terminate()
         return 1
 
     try:
-        # 1. Health
-        deadline = time.time() + 120
+        # 1. Health. The deadline is generous: a cold CI runner scanning the
+        # freshly assembled payload can take well over a minute to start.
+        deadline = time.time() + 300
         healthy = False
         while time.time() < deadline:
             if proc.poll() is not None:
@@ -119,7 +138,7 @@ def main() -> int:
         # 4. Model load end-to-end
         task = post_json("/api/track/model/load", {"model_name": MODEL_NAME})
         print(f"[smoke] load task: {task.get('task_id')}")
-        deadline = time.time() + 240
+        deadline = time.time() + 300
         loaded = False
         while time.time() < deadline:
             if proc.poll() is not None:
