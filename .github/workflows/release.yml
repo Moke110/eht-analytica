@@ -45,6 +45,15 @@ jobs:
       - name: Run test suite
         run: uv run pytest -q
 
+      - name: Exclude workspace from Defender (build speed / false positives)
+        # Best effort only: a fresh ~5 GB reassembled payload can otherwise be
+        # scanned on first access, delaying app startup past the smoke timeout.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionProcess "EHT_Analytica.exe"
+
       - name: Build release artifacts (volumes + Setup exe)
         # Includes verification: reassemble the Volumes into an Installation
         # and run the packaged-app smoke test before anything is uploaded.

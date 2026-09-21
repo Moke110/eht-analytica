@@ -96,10 +96,46 @@ def main() -> int:
             print(line)
         print("[smoke] -----------------------")
 
+    def dump_windows_diagnostics() -> None:
+        """Best-effort Windows hints when the frozen app never starts.
+
+        A PyInstaller windowed bootloader failure shows a modal dialog and
+        writes nothing to disk, so surface the live window titles and the
+        Application event log (faulting module) instead.
+        """
+        if sys.platform != "win32":
+            return
+        script = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            "Write-Output '--- EHT_Analytica processes ---';"
+            "Get-Process EHT_Analytica | Select-Object Id,StartTime,"
+            "MainWindowTitle,Responding | Format-List;"
+            "Write-Output '--- recent Application errors ---';"
+            "Get-WinEvent -FilterHashtable @{LogName='Application';"
+            "Level=1,2} -MaxEvents 20 | "
+            "Where-Object { $_.Message -match 'EHT_Analytica' } | "
+            "Select-Object TimeCreated,Id,ProviderName,Message | Format-List"
+        )
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 script],
+                capture_output=True, text=True, timeout=90)
+        except Exception as e:
+            print(f"[smoke] (windows diagnostics failed: {e})")
+            return
+        print("[smoke] ---- Windows diagnostics ----")
+        print((out.stdout or "").strip() or "(none)")
+        if out.stderr.strip():
+            print(f"[smoke] stderr: {out.stderr.strip()[:800]}")
+        print("[smoke] ------------------------------")
+
     def fail(msg: str) -> int:
         stop.set()
         print(f"[smoke] FAIL: {msg}")
+        print(f"[smoke] process poll: {proc.poll()}")
         dump_app_log()
+        dump_windows_diagnostics()
         proc.terminate()
         return 1
 
