@@ -295,3 +295,38 @@ def test_download_retries_on_hash_mismatch(http_server, tmp_path):
     vol_requests = [r for r in server.requests if r["path"] == "/vol.zip"]
     assert len(vol_requests) == 2
     assert not dest.exists()
+
+
+# ---------------------------------------------------------------------------
+# Proxy handling
+# ---------------------------------------------------------------------------
+
+def _proxy_of(opener):
+    return next(h for h in opener.handlers
+                if isinstance(h, urllib.request.ProxyHandler))
+
+
+def test_normalize_proxy_adds_http_scheme():
+    assert installer_core.normalize_proxy("127.0.0.1:7897") == \
+        "http://127.0.0.1:7897"
+    assert installer_core.normalize_proxy(" 127.0.0.1:7897 ") == \
+        "http://127.0.0.1:7897"
+    assert installer_core.normalize_proxy("socks5://127.0.0.1:7897") == \
+        "socks5://127.0.0.1:7897"
+
+
+def test_build_opener_prefers_explicit_proxy(monkeypatch):
+    monkeypatch.setattr(urllib.request, "getproxies",
+                        lambda: {"http": "http://system:1"})
+    opener = installer_core.build_opener("127.0.0.1:7897")
+    assert _proxy_of(opener).proxies == {
+        "http": "http://127.0.0.1:7897",
+        "https": "http://127.0.0.1:7897",
+    }
+
+
+def test_build_opener_falls_back_to_system_proxy(monkeypatch):
+    monkeypatch.setattr(urllib.request, "getproxies",
+                        lambda: {"https": "http://system:8080"})
+    opener = installer_core.build_opener(None)
+    assert _proxy_of(opener).proxies == {"https": "http://system:8080"}

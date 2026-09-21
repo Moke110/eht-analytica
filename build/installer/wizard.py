@@ -1,7 +1,7 @@
 """EHT Analytica Setup wizard — tkinter GUI over the headless installer core.
 
-Wizard flow: welcome (GPU info) -> options (install dir, shortcuts, mirror
-URL) -> progress (per-Volume download + extraction) -> finish (launch).
+Wizard flow: welcome (GPU info) -> options (install dir, shortcuts, proxy)
+-> progress (per-Volume download + extraction) -> finish (launch).
 
 Also serves as the uninstaller when started with ``--uninstall``: the
 Installer drops a copy of itself as ``Uninstall.exe`` inside the
@@ -10,7 +10,8 @@ Installation and points the Add/Remove-Programs entry at it.
 The volume manifest is embedded in the exe at build time (PyInstaller
 datas); a side-car ``manifest.json`` next to this script is the dev-mode
 fallback. Default download base is the official GitHub release URL; the
-advanced mirror field replaces it verbatim.
+user may enter an explicit proxy (e.g. Clash Verge at ``127.0.0.1:7897``)
+to route downloads, otherwise the Windows system proxy is used.
 """
 
 from __future__ import annotations
@@ -94,11 +95,13 @@ def run_uninstall(install_dir: Path) -> int:
 
 class WizardApp:
     def __init__(self, root: tk.Tk, manifest: Manifest, cli_base_url: str | None,
-                 cli_install_dir: str | None) -> None:
+                 cli_install_dir: str | None,
+                 cli_proxy: str | None = None) -> None:
         self.root = root
         self.manifest = manifest
         self.default_base = cli_base_url or helpers.default_download_base(
             manifest.tag)
+        self.default_proxy = cli_proxy or ""
         self.q: queue.Queue[tuple[str, dict]] = queue.Queue()
         self.cancel_requested = False
         self.worker: threading.Thread | None = None
@@ -181,17 +184,18 @@ class WizardApp:
         ttk.Checkbutton(frame, text="Launch after installation completes",
                         variable=self.opt_launch).pack(anchor="w", pady=2)
 
-        # Advanced: mirror download base
-        advanced = ttk.LabelFrame(frame, text="Advanced", padding=8)
+        # Advanced: optional explicit proxy (Clash/V2Ray etc.)
+        advanced = ttk.LabelFrame(frame, text="Advanced (optional)", padding=8)
         advanced.pack(fill="x", pady=(16, 0))
         ttk.Label(
             advanced,
-            text="Download base URL (replaces the GitHub release URL "
-                 "verbatim — for proxies or mirrors):",
-            wraplength=460,
+            text="Proxy server used to download the payload. Leave empty to "
+                 "use the Windows system proxy.\n"
+                 "Example (Clash Verge): http://127.0.0.1:7897",
+            wraplength=460, justify="left",
         ).pack(anchor="w")
-        self.mirror_var = tk.StringVar(value=self.default_base)
-        ttk.Entry(advanced, textvariable=self.mirror_var).pack(
+        self.proxy_var = tk.StringVar(value=self.default_proxy)
+        ttk.Entry(advanced, textvariable=self.proxy_var).pack(
             fill="x", pady=(2, 0))
 
         btns = ttk.Frame(frame)
@@ -263,10 +267,8 @@ class WizardApp:
                                  "(corrupt Setup exe).")
             return
         self.install_dir = Path(self.dir_var.get()).expanduser()
-        base_url = self.mirror_var.get().strip()
-        if not base_url:
-            messagebox.showerror(WINDOW_TITLE, "Download base URL is empty.")
-            return
+        base_url = self.default_base
+        proxy = self.proxy_var.get().strip()
         # Capture option values on the main thread: tkinter variables must
         # not be touched from the worker thread.
         self.opts = {
@@ -294,14 +296,17 @@ class WizardApp:
         self._show_progress()
         self.cancel_requested = False
         self.worker = threading.Thread(
-            target=self._worker, args=(base_url, self.install_dir, self.opts),
+            target=self._worker,
+            args=(base_url, self.install_dir, self.opts, proxy),
             daemon=True)
         self.worker.start()
 
-    def _worker(self, base_url: str, install_dir: Path, opts: dict) -> None:
+    def _worker(self, base_url: str, install_dir: Path, opts: dict,
+                proxy: str) -> None:
         try:
             install_from_manifest(self.manifest, base_url, install_dir,
-                                  progress=self._emit, max_attempts=3)
+                                  progress=self._emit, max_attempts=3,
+                                  proxy=proxy)
             self._post_install(install_dir, opts)
             self.q.put(("done", {}))
         except InstallCancelled:
@@ -362,7 +367,14 @@ class WizardApp:
                         message="Installation cancelled. Downloaded parts "
                                 "are kept and will be resumed on retry.")
                 elif kind == "error":
-                    self._show_finish(ok=False, message=info.get("message", ""))
+                    message = info.get("message", "")
+                    if "HTTP 404" in message or "Cannot reach" in message:
+                        message += (
+                            "\n\nThis is usually a network/proxy issue. If you "
+                            "use Clash Verge, enter http://127.0.0.1:7897 in "
+                            "the Advanced proxy field and retry."
+                        )
+                    self._show_finish(ok=False, message=message)
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
@@ -399,6 +411,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="target installation directory")
     parser.add_argument("--base-url", default=None,
                         help="download base URL (overrides the embedded default)")
+    parser.add_argument("--proxy", default=None,
+                        help="HTTP proxy for downloads, e.g. 127.0.0.1:7897 "
+                             "(overrides the Windows system proxy)")
     parser.add_argument("--manifest", default=None,
                         help="path to a manifest.json (dev mode)")
     args = parser.parse_args(argv)
@@ -426,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         ttk.Style().theme_use("vista")
     except tk.TclError:
         pass
-    WizardApp(root, m, args.base_url, args.install_dir)
+    WizardApp(root, m, args.base_url, args.install_dir, args.proxy)
     root.mainloop()
     return 0
 

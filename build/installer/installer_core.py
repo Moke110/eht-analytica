@@ -123,10 +123,28 @@ def _prepare_destination(dest_dir: Path) -> None:
     marker.write_text("", encoding="utf-8")
 
 
-def _default_opener() -> urllib.request.OpenerDirector:
-    """Proxy-aware opener: uses system proxy settings (Windows registry/env)."""
+def normalize_proxy(proxy: str) -> str:
+    """Accept ``host:port`` or ``scheme://host:port`` and return a URL."""
+    proxy = proxy.strip()
+    if proxy and "://" not in proxy:
+        proxy = "http://" + proxy
+    return proxy
+
+
+def build_opener(proxy: Optional[str] = None) -> urllib.request.OpenerDirector:
+    """Proxy-aware opener.
+
+    An explicit ``proxy`` (``host:port`` or a full URL, e.g.
+    ``http://127.0.0.1:7897`` for Clash) wins; otherwise the system proxy
+    settings (Windows registry / environment) are used.
+    """
+    if proxy and proxy.strip():
+        url = normalize_proxy(proxy)
+        proxies: dict[str, str] = {"http": url, "https": url}
+    else:
+        proxies = urllib.request.getproxies()
     return urllib.request.build_opener(
-        urllib.request.ProxyHandler(urllib.request.getproxies())
+        urllib.request.ProxyHandler(proxies)
     )
 
 
@@ -145,7 +163,8 @@ def download_volume(url: str, dest: Path, expected_size: int, expected_sha256: s
                     progress: Optional[Callable[[int, int], None]] = None,
                     resume: bool = True, max_attempts: int = 3,
                     timeout: float = 60.0,
-                    opener: Optional[urllib.request.OpenerDirector] = None
+                    opener: Optional[urllib.request.OpenerDirector] = None,
+                    proxy: Optional[str] = None,
                     ) -> Path:
     """Download ``url`` to ``dest`` with Range-resume and hash verification.
 
@@ -160,7 +179,7 @@ def download_volume(url: str, dest: Path, expected_size: int, expected_sha256: s
     if (dest.exists() and dest.stat().st_size == expected_size
             and _sha256_of_file(dest) == expected_sha256):
         return dest
-    op = opener or _default_opener()
+    op = opener or build_opener(proxy)
     last_error: Exception | None = None
 
     for attempt in range(1, max_attempts + 1):
@@ -231,13 +250,17 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
                           progress: Optional[ProgressCB] = None,
                           max_attempts: int = 3,
                           keep_volumes: bool = False,
-                          opener: Optional[urllib.request.OpenerDirector] = None
+                          opener: Optional[urllib.request.OpenerDirector] = None,
+                          proxy: Optional[str] = None,
                           ) -> Path:
     """Download all Volumes from ``base_url`` and assemble ``dest_dir``.
 
     Fires progress events: ``download`` (per-Volume byte counters),
     ``extract`` (per-Volume), ``done``. Raises InstallError on any failure
     (disk space, size/hash mismatch, extraction error, file-count mismatch).
+
+    ``proxy`` (``host:port`` or a full URL) routes downloads through an
+    explicit proxy; when omitted the Windows system proxy is used.
     """
     dest_dir = Path(dest_dir)
     total_volumes = len(manifest.volumes)
@@ -259,6 +282,7 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
     cache_dir.mkdir(parents=True, exist_ok=True)
     _prepare_destination(dest_dir)
 
+    op = opener or build_opener(proxy)
     extracted_files = 0
     success = False
     try:
@@ -281,7 +305,7 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
 
             download_volume(url, zip_path, vol.size_bytes, vol.sha256,
                             progress=byte_progress, max_attempts=max_attempts,
-                            opener=opener)
+                            opener=op)
 
             if progress:
                 progress("extract", {
