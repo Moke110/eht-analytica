@@ -11,6 +11,8 @@ frontend/node_modules/
 # Build artifacts
 build/dist/
 build/eht_analytica/
+build/installer_build/
+build/installer/manifest.json
 dist/
 
 # Agent instructions (local only, never pushed)

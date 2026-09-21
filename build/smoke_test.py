@@ -1,15 +1,17 @@
 """Cross-platform smoke test for the packaged EHT_Analytica build.
 
-Used by CI (GitHub Actions) right after ``build/build.py``. Starts the
-packaged executable from ``dist/``, keeps the heartbeat alive, and verifies
-the core API surface: health, model registry, device info, and an actual
-model load (weights -> torch inference stack).
+Used by CI (GitHub Actions) right after ``build/build.py`` and by
+``build/make_release.py`` against the reassembled Installation. Starts the
+packaged executable, keeps the heartbeat alive, and verifies the core API
+surface: health, model registry, device info, and an actual model load
+(weights -> torch inference stack).
 
 Exit code 0 = pass, 1 = fail.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -19,18 +21,17 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DIST = ROOT / "dist" / "EHT_Analytica"
 API = "http://127.0.0.1:9876"
 MODEL_NAME = "unet_v3"
 
 
-def find_executable() -> Path:
+def find_executable(app_dir: Path) -> Path:
     if sys.platform == "darwin":
-        exe = DIST / "EHT_Analytica.app" / "Contents" / "MacOS" / "EHT_Analytica"
+        exe = app_dir / "EHT_Analytica.app" / "Contents" / "MacOS" / "EHT_Analytica"
     elif sys.platform == "win32":
-        exe = DIST / "EHT_Analytica.exe"
+        exe = app_dir / "EHT_Analytica.exe"
     else:
-        exe = DIST / "EHT_Analytica"
+        exe = app_dir / "EHT_Analytica"
     if not exe.exists():
         raise FileNotFoundError(f"Packaged executable not found: {exe}")
     return exe
@@ -53,7 +54,14 @@ def post_json(path: str, payload: dict, timeout: float = 15.0):
 
 
 def main() -> int:
-    exe = find_executable()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--app-dir", type=Path, default=ROOT / "dist" / "EHT_Analytica",
+        help="packaged app directory to smoke test "
+             "(default: dist/EHT_Analytica)")
+    args = parser.parse_args()
+
+    exe = find_executable(args.app_dir.resolve())
     print(f"[smoke] starting: {exe}")
     proc = subprocess.Popen([str(exe)], cwd=str(exe.parent))
 
