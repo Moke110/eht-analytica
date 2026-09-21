@@ -32,7 +32,7 @@ def _get_frontend_dist() -> Path | None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="EHT Analytica", version="0.2.0")
+    app = FastAPI(title="EHT Analytica", version="1.0.0")
 
     app.add_middleware(
         CORSMiddleware,

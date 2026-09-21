@@ -682,7 +682,7 @@ wheels = [
 
 [[package]]
 name = "eht-analytica"
-version = "0.3.0"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },

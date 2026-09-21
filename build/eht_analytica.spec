@@ -74,7 +74,7 @@ if sys.platform == 'darwin':
         bundle_identifier='com.moke110.eht-analytica',
         info_plist={
             'CFBundleDisplayName': 'EHT Analytica',
-            'CFBundleShortVersionString': '0.3.0',
+            'CFBundleShortVersionString': '1.0.0',
             'NSHighResolutionCapable': True,
         },
     )
