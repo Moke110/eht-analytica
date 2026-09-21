@@ -68,18 +68,12 @@ def assemble_release() -> None:
         app_root_dst = dist_dir
     model_dst = app_root_dst / "model"
 
-    # Models excluded from release builds
-    EXCLUDE_MODELS = {"unet_v2"}
-
-    # Read model registry from source of truth and filter to release models
+    # Read model registry from source of truth
     source_registry_path = ROOT / "model" / "models.json"
     if source_registry_path.exists():
         registry = json.loads(source_registry_path.read_text(encoding="utf-8"))
         release_models = []
         for m in registry.get("models", []):
-            if m["name"] in EXCLUDE_MODELS:
-                print(f"  Skipping model (excluded): {m['name']}")
-                continue
             model_dir = ROOT / "model" / m["module"]
             weights_exist = all(
                 (model_dir / Path(w).name).exists()

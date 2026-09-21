@@ -1,27 +1,6 @@
 {
   "models": [
     {
-      "name": "unet_v2",
-      "display_name": "EHT Tracker v2",
-      "description": "5-model U-Net ensemble (512×512, 4-stage) for EHT pillar coordinate tracking",
-      "definition": "unet_v2/unet_v2.py",
-      "weights": [
-        "unet_v2/unet_v2_R0_weights.pth",
-        "unet_v2/unet_v2_R1_weights.pth",
-        "unet_v2/unet_v2_R2_weights.pth",
-        "unet_v2/unet_v2_R3_weights.pth",
-        "unet_v2/unet_v2_R4_weights.pth"
-      ],
-      "load_function": "load_model",
-      "module": "unet_v2",
-      "ensemble_class": "EHTTracker",
-      "model_class": "CircleCenterNet",
-      "input_channels": 1,
-      "input_size": [512, 512],
-      "target_size": 512,
-      "num_peaks": 2
-    },
-    {
       "name": "unet_v3",
       "display_name": "EHT Tracker v3",
       "description": "Single U-Net model (256×256, 3-stage) for EHT pillar coordinate tracking",
@@ -31,7 +10,6 @@
       ],
       "load_function": "load_model",
       "module": "unet_v3",
-      "ensemble_class": "EHTTracker",
       "model_class": "CircleCenterNet",
       "input_channels": 1,
       "input_size": [256, 256],

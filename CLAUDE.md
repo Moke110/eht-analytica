@@ -68,7 +68,6 @@ EHT_Analytica/
 │   └── model/                   # Per-model training manifests
 ├── model/                       # Production inference models
 │   ├── models.json              # Central model registry (name, display_name, weights, target_size)
-├── model/unet_v2/               # U-Net v2 (gitignored — superseded by v3, 5-model ensemble, 512×512)
 ├── model/unet_v3/               # U-Net v3 tracking model (single model, 256×256)
 │   ├── unet_v3.py               # Model definition + load_model(weight_paths, device) -> EHTTracker
 │   └── unet_v3_weights.pth      # Pure model weights (state_dict only, tracked in git)
@@ -288,7 +287,7 @@ uv run python build/build.py
 dist/EHT_Analytica/
 ├── EHT_Analytica.exe          # Entry point (icon embedded from img/logo.ico)
 ├── model/
-│   ├── models.json            # Filtered registry (release models only)
+│   ├── models.json            # Model registry (copied from source)
 │   └── <module>/              # Per-model .py + .pth files
 ├── frontend_dist/             # Built Vue frontend (served as static files)
 ├── functions/                 # Pure Python functions
@@ -298,13 +297,7 @@ dist/EHT_Analytica/
 
 ### Model exclusion
 
-`build/build.py` has an `EXCLUDE_MODELS` set that controls which models are packaged:
-
-```python
-EXCLUDE_MODELS = {"unet_v2"}
-```
-
-**unet_v2 is permanently excluded from release builds** — it is superseded by unet_v3. Its weights are gitignored and the 5-model ensemble (~148 MB) would bloat the release package. To exclude additional models, add their registry `name` to this set.
+`build/build.py` packages every model listed in `model/models.json` whose weight files exist. To keep a model out of release builds, remove its entry from the registry (or delete its weights so the assembly step skips it).
 
 ### Release checklist
 

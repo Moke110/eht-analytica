@@ -39,7 +39,7 @@ class RoiDefinition(BaseModel):
 # ── Model ──────────────────────────────────────────────────────────────
 
 class ModelLoadRequest(BaseModel):
-    model_name: str  # e.g. "unet_v2", "unet_v3"
+    model_name: str  # e.g. "unet_v3"
 
 
 class ModelInfo(BaseModel):

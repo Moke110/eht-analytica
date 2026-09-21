@@ -1,11 +1,11 @@
 """
 EHT tracking model v3 — single U-Net (256×256) for pillar coordinate prediction.
 
-Compared to unet_v2 (512×512, 4 encoder stages, 5-model ensemble):
-- Single model trained once (no k-fold ensemble)
-- Reduced to 256×256 input/output
-- 3 encoder/decoder stages instead of 4 (removes the 64→32 spatial level)
-- Bottleneck channels: 256 (vs 512 in v2)
+Design:
+- Single model trained once
+- 256×256 input/output
+- 3 encoder/decoder stages
+- Bottleneck channels: 256
 - ~70% fewer parameters, ~2× faster inference
 
 This module runs in eager mode (no TorchScript) for CUDA compatibility.
@@ -119,9 +119,6 @@ class EHTTracker(nn.Module):
 
     Handles pre-processing (pad→resize→normalize), model inference, and
     post-processing (heatmap→coords→original pixel space).
-
-    Compared to v2: target_size=256 (was 512), blob_sd halved proportionally,
-    single model instead of 5-model ensemble.
     """
 
     def __init__(self, models: nn.ModuleList, device: torch.device):
@@ -131,7 +128,7 @@ class EHTTracker(nn.Module):
         self.num_models = len(models)
         self.target_size = 256
         self.num_peaks = 2
-        self.blob_sd = 6.0                           # halved vs v2 (12.0) for 256×256
+        self.blob_sd = 6.0                           # gaussian heatmap sigma for 256×256
         self.exclusion_radius = 1.96 * self.blob_sd  # ≈ 11.76 px
 
     def pre_process(self, image: torch.Tensor) -> Tuple[torch.Tensor, int, int, int, int, int]:

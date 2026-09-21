@@ -35,7 +35,6 @@ cd frontend && npm run dev
 - Node.js
 - NVIDIA GPU (optional, CPU fallback)
 - `model/unet_v3/unet_v3_weights.pth` — default model weights (tracked in git)
-- `model/unet_v2/` — optional legacy model (gitignored, see [Models](#models))
 
 ## Models
 
@@ -45,7 +44,6 @@ discovers available models automatically from `model/models.json`.
 | Model | Name | Description |
 |-------|------|-------------|
 | **EHT Tracker v3** | `unet_v3` | Single U-Net (256×256, 3-stage). Fast, lightweight. Default and recommended. Weights are tracked in git. |
-| **EHT Tracker v2** | `unet_v2` | 5-model ensemble (512×512, 4-stage). Superseded by v3. Weights are gitignored (large files). |
 
 ### Adding a New Model
 
@@ -57,7 +55,7 @@ discovers available models automatically from `model/models.json`.
 
 Each model directory under `model/` contains:
 - `{name}.py` — Model architecture + `load_model(weight_paths, device)` function
-- `{name}_weights.pth` — Pure model weights (state_dict). v3 weights are tracked in git; v2 weights are gitignored (use `model/unet_v2/` locally for v2).
+- `{name}_weights.pth` — Pure model weights (state_dict), tracked in git
 
 ## Developer Docs
 

@@ -13,6 +13,9 @@ build/dist/
 build/eht_analytica/
 dist/
 
+# Agent instructions (local only, never pushed)
+AGENTS.md
+
 # Agent development docs (not part of the released project)
 docs/
 
@@ -29,9 +32,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Legacy model (superseded by unet_v3)
-model/unet_v2/
 
 # Legacy large artifacts (stripped from git history; never re-add)
 model/track_unet_v2/

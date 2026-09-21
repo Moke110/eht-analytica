@@ -119,8 +119,6 @@ def _derive_model_name_from_path(path: str) -> str | None:
     norm = os.path.normpath(path).replace("\\", "/").lower()
     if "/unet_v3/" in norm or norm.endswith("/unet_v3"):
         return "unet_v3"
-    if "/unet_v2/" in norm or norm.endswith("/unet_v2"):
-        return "unet_v2"
     return None
 
 
