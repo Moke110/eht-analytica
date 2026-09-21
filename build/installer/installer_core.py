@@ -30,6 +30,13 @@ class InstallError(Exception):
     """Raised for any download/verification/assembly failure."""
 
 
+class InstallCancelled(InstallError):
+    """Raised (typically from a progress callback) to abort the install.
+
+    Bypasses the per-Volume download retry loop: cancellation is intentional.
+    """
+
+
 @dataclass(frozen=True)
 class VolumeSpec:
     index: int
@@ -113,12 +120,17 @@ def download_volume(url: str, dest: Path, expected_size: int, expected_sha256: s
                     ) -> Path:
     """Download ``url`` to ``dest`` with Range-resume and hash verification.
 
-    Retries up to ``max_attempts`` times: a partial file smaller than the
-    expected size is resumed on the next attempt; a completed file whose
-    hash mismatches is deleted and re-fetched from scratch.
+    A file that already exists with the right size and hash is returned
+    immediately (cheap retries). Retries up to ``max_attempts`` times: a
+    partial file smaller than the expected size is resumed on the next
+    attempt; a completed file whose hash mismatches is deleted and
+    re-fetched from scratch.
     """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if (dest.exists() and dest.stat().st_size == expected_size
+            and _sha256_of_file(dest) == expected_sha256):
+        return dest
     op = opener or _default_opener()
     last_error: Exception | None = None
 
@@ -127,6 +139,8 @@ def download_volume(url: str, dest: Path, expected_size: int, expected_sha256: s
             _download_once(url, dest, expected_size, expected_sha256,
                            progress, resume, timeout, op)
             return dest
+        except InstallCancelled:
+            raise
         except InstallError as e:
             last_error = e
     raise InstallError(
@@ -216,6 +230,7 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     extracted_files = 0
+    success = False
     try:
         for i, vol in enumerate(manifest.volumes, start=1):
             url = base_url.rstrip("/") + "/" + vol.filename
@@ -257,8 +272,11 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
 
             if not keep_volumes:
                 zip_path.unlink(missing_ok=True)
+        success = True
     finally:
-        if not keep_volumes:
+        # Keep the cache on failure/cancellation so a retry can resume
+        # partially downloaded Volumes instead of starting over.
+        if success and not keep_volumes:
             shutil.rmtree(cache_dir, ignore_errors=True)
 
     if extracted_files != manifest.total_files:
