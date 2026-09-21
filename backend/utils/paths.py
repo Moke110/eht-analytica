@@ -1,12 +1,13 @@
 """Centralized path resolution for dev and frozen (PyInstaller) environments.
 
 When frozen, the app root is the directory containing the EXE (where model/
-and config/ live alongside).  In development, it's the project root derived
-from this file's location.
+lives alongside).  In development, it's the project root derived from this
+file's location.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,14 +29,22 @@ def get_model_dir() -> Path:
 
 
 def get_config_dir() -> Path:
-    """Directory for the persistent app config (writable).
+    """Directory for the persistent app config (writable, survives reinstalls).
 
+    - Frozen on Windows: ``%APPDATA%\\EHT_Analytica``
     - Frozen on macOS: ``~/Library/Application Support/EHT_Analytica``
-      (the .app bundle may be read-only or replaced on update).
-    - Otherwise: ``<app_root>/config``.
+    - Otherwise (dev): ``<app_root>/config``
+
+    Frozen builds keep the config outside the Installation directory so the
+    installation can be replaced or deleted without losing user settings.
     """
-    if getattr(sys, 'frozen', False) and sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "EHT_Analytica"
+    if getattr(sys, 'frozen', False):
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA")
+            base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+            return base / "EHT_Analytica"
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "EHT_Analytica"
     return get_app_root() / "config"
 
 
