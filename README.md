@@ -76,7 +76,7 @@ The build script reads `model/models.json` and includes all models whose weight 
 ## Download
 
 Prebuilt packages for Windows and macOS (Apple Silicon) are available on the
-[Releases](https://github.com/Moke110/EHT_Analytica/releases) page. Release builds
+[Releases](https://github.com/Moke110/eht_analytica/releases) page. Release builds
 are CPU-only; build from source for NVIDIA GPU support.
 
 ## License

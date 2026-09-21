@@ -78,7 +78,7 @@ jobs:
             | `EHT_Analytica-macOS-*.zip` | macOS 14+ (Apple Silicon) | See note below |
 
             **Note**: Builds are CPU-only for portability. For NVIDIA GPU support,
-            [build from source](https://github.com/Moke110/EHT_Analytica#readme) with CUDA-enabled PyTorch.
+            [build from source](https://github.com/Moke110/eht_analytica#readme) with CUDA-enabled PyTorch.
 
             ### macOS first launch (unsigned app)
 

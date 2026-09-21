@@ -12,8 +12,8 @@ Subpackages:
 __version__ = "0.1.0"
 __author__ = "Chang Wang"
 __email__ = "changwangbj02@gmail.com"
-__license__ = "No license specified"
-__url__ = "https://github.com/Moke110/EHT_Analytica"
+__license__ = "MIT"
+__url__ = "https://github.com/Moke110/eht_analytica"
 __description__ = "A deep learning EHT analysis tool"
 
 VERSION = tuple(map(int, __version__.split('.')))
