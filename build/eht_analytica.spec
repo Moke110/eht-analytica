@@ -7,6 +7,12 @@ from pathlib import Path
 _root = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(_root))
 
+# Icon: prefer img/logo.ico (local); fall back to the tracked copy in the
+# frontend (CI checkouts have no img/ — it is gitignored).
+_icon = _root / 'img' / 'logo.ico'
+if not _icon.exists():
+    _icon = _root / 'frontend' / 'public' / 'logo.ico'
+
 a = Analysis(
     [str(_root / 'backend' / 'launcher.py')],
     pathex=[],
@@ -45,7 +51,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    icon=str(_root / 'img' / 'logo.ico'),
+    icon=str(_icon),
     console=False,
     disable_windowed_tracked=False,
     argv_emulation=False,

@@ -39,10 +39,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - name: Install Python dependencies (CPU torch)
+      - name: Install Python dependencies
+        # PyPI torch wheels are CPU-only on Windows and macOS — no CUDA index
+        # needed. (The pytorch.org CPU index has no macOS wheels at all.)
         run: |
           uv venv --python 3.12
-          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
           uv pip install -r requirements.txt
 
       - name: Build package

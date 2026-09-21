@@ -301,7 +301,7 @@ dist/EHT_Analytica/
 
 ### Release checklist
 
-- `img/logo.ico` must exist at project root for the `.exe` icon (file is gitignored; keep a copy outside the repo)
+- `.exe` icon: `img/logo.ico` if present (gitignored), else `frontend/public/logo.ico` (tracked — used by CI)
 - `model/unet_v3/unet_v3_weights.pth` must exist (tracked in git)
 - Run `build/build.py` from the project root with the uv-managed venv active
 
