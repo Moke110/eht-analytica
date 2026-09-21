@@ -121,6 +121,9 @@ def main() -> int:
                         help="max Volume size in MiB (default %(default)s)")
     parser.add_argument("--skip-verify", action="store_true",
                         help="skip reassembly + smoke test (dev shortcut)")
+    parser.add_argument("--prune-onedir", action="store_true",
+                        help="delete dist/EHT_Analytica after splitting "
+                             "(frees runner disk; volumes are the source of truth)")
     args = parser.parse_args()
 
     RELEASE.mkdir(parents=True, exist_ok=True)
@@ -133,6 +136,10 @@ def main() -> int:
         build_onedir()
 
     manifest_dict = split_volumes(args.tag, args.max_volume_mb)
+
+    if args.prune_onedir:
+        step("Pruning onedir (Volumes are the source of truth from here)")
+        shutil.rmtree(DIST / "EHT_Analytica", ignore_errors=True)
 
     build_installer(args.tag, manifest_dict)
 

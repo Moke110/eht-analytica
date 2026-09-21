@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual runs must be dispatched on a tag ref (ref_name becomes the tag).
   workflow_dispatch:
 
 permissions:
@@ -14,17 +15,11 @@ concurrency:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: windows
-          - os: macos-latest
-            platform: macos
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    name: Build Windows release
+    runs-on: windows-latest
+    # The payload includes CUDA PyTorch (~3 GB wheel) plus a full onedir
+    # build, Volume split, installer build, and reassembly for verification.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -35,57 +30,50 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - uses: astral-sh/setup-uv@v5
+        with:
+          # Reuse the ~3 GB torch wheel between releases; keep the cache off
+          # the runner's smaller system drive.
+          enable-cache: true
+          cache-local-path: D:\uv-cache
 
-      - name: Install Python dependencies
-        # PyPI torch wheels are CPU-only on Windows and macOS — no CUDA index
-        # needed. (The pytorch.org CPU index has no macOS wheels at all.)
-        run: |
-          uv venv --python 3.12
-          uv pip install -r requirements.txt
+      - name: Install Python dependencies (CUDA torch via lockfile)
+        run: uv sync --extra dev
 
-      - name: Build package
-        run: uv run --no-sync python build/build.py
-
-      - name: Smoke test
-        run: uv run --no-sync python build/smoke_test.py
-
-      - name: Create archive (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/EHT_Analytica -DestinationPath "EHT_Analytica-Windows-${{ github.ref_name }}.zip"
-          Get-Item "EHT_Analytica-Windows-${{ github.ref_name }}.zip" | Select-Object Name, Length
-
-      - name: Create archive (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          cd dist
-          ditto -c -k --keepParent EHT_Analytica "../EHT_Analytica-macOS-${{ github.ref_name }}.zip"
-          ls -lh "../EHT_Analytica-macOS-${{ github.ref_name }}.zip"
+      - name: Build release artifacts (volumes + Setup exe)
+        # Includes verification: reassemble the Volumes into an Installation
+        # and run the packaged-app smoke test before anything is uploaded.
+        run: uv run python build/make_release.py --tag "${{ github.ref_name }}" --prune-onedir
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: EHT_Analytica-*.zip
+          # Setup exe + payload Volumes (release-manifest.json stays local)
+          files: dist/release/EHT_Analytica-*
           body: |
-            ## Downloads
+            ## EHT Analytica ${{ github.ref_name }} — Windows
 
-            | File | Platform | Notes |
-            |------|----------|-------|
-            | `EHT_Analytica-Windows-*.zip` | Windows 10/11 (x64) | Extract and run `EHT_Analytica.exe` |
-            | `EHT_Analytica-macOS-*.zip` | macOS 14+ (Apple Silicon) | See note below |
+            | File | Notes |
+            |------|-------|
+            | `EHT_Analytica-Setup-*.exe` | **Download this.** Setup wizard (no admin rights needed) |
+            | `EHT_Analytica-*-payload-*.zip` | Payload volumes — downloaded automatically by the Setup wizard |
 
-            **Note**: Builds are CPU-only for portability. For NVIDIA GPU support,
-            [build from source](https://github.com/Moke110/eht_analytica#readme) with CUDA-enabled PyTorch.
+            ### How to install
 
-            ### macOS first launch (unsigned app)
+            1. Download `EHT_Analytica-Setup-*.exe` and run it.
+            2. The wizard downloads the payload volumes automatically, verifies
+               each one (SHA-256), and installs per-user with a desktop /
+               Start-menu shortcut and an uninstall entry.
 
-            The app is not code-signed. After extracting, right-click
-            `EHT_Analytica.app` and choose **Open**, or run:
+            ### Requirements
 
-            ```bash
-            xattr -cr /path/to/EHT_Analytica.app
-            ```
+            - **Windows 10 x64 or newer**
+            - About 8 GB free disk space during installation (the wizard
+              downloads ~2.7 GB and assembles a ~5 GB Installation)
+            - An NVIDIA GPU is optional: without one the app runs in CPU mode
+              automatically. A recent NVIDIA driver enables GPU acceleration.
+
+            The app is not code-signed — Windows SmartScreen may warn on first
+            launch. Choose "More info" → "Run anyway".
