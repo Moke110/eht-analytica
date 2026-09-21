@@ -144,10 +144,17 @@ def test_volume_filename_format():
     assert _volume_filename("v0.4.0", 12) == "EHT_Analytica-v0.4.0-payload-12.zip"
 
 
-def test_stale_volumes_removed_on_resplit(synthetic_tree, tmp_path):
+def test_stale_release_artifacts_removed_on_resplit(synthetic_tree, tmp_path):
     out = tmp_path / "release"
     _split(synthetic_tree, out, max_bytes=1000)
-    stale = out / _volume_filename("v0.0.1-test", 99)
-    stale.write_bytes(b"stale")
+    # Artifacts from a previous run/tag, plus a stale Setup exe
+    stale_volume = out / _volume_filename("v0.0.1-test", 99)
+    stale_other_tag = out / "EHT_Analytica-v9.9.9-payload-01.zip"
+    stale_setup = out / "EHT_Analytica-Setup-v9.9.9.exe"
+    for p in (stale_volume, stale_other_tag, stale_setup):
+        p.write_bytes(b"stale")
+
     _split(synthetic_tree, out, max_bytes=1000)
-    assert not stale.exists()
+
+    for p in (stale_volume, stale_other_tag, stale_setup):
+        assert not p.exists()

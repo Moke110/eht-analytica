@@ -90,6 +90,61 @@ def test_corrupted_volume_rejected(payload, tmp_path):
     with pytest.raises(InstallError, match=manifest.volumes[0].filename):
         install_from_manifest(manifest, release_dir.as_uri(),
                               tmp_path / "Installation", max_attempts=1)
+    # Failed installs keep the download cache so a retry can resume
+    assert (tmp_path / ".Installation.setup-cache").exists()
+
+
+def test_install_replaces_existing_installation(payload, tmp_path):
+    """An upgrade replaces the Installation wholesale (no stale files)."""
+    release_dir, manifest, _ = payload
+    dest = tmp_path / "Installation"
+    dest.mkdir()
+    (dest / "EHT_Analytica.exe").write_bytes(b"old build")
+    stale = dest / "lib" / "old_module.dll"
+    stale.parent.mkdir()
+    stale.write_bytes(b"stale")
+
+    install_from_manifest(manifest, release_dir.as_uri(), dest)
+
+    assert trees_identical(tmp_path / "onedir", dest)[0]
+    assert not stale.exists()
+
+
+def test_install_refuses_foreign_directory(payload, tmp_path):
+    """A non-empty, non-Installation destination is never wiped."""
+    release_dir, manifest, _ = payload
+    dest = tmp_path / "SomeonesFolder"
+    dest.mkdir()
+    precious = dest / "thesis.docx"
+    precious.write_bytes(b"important")
+
+    with pytest.raises(InstallError, match="not an EHT"):
+        install_from_manifest(manifest, release_dir.as_uri(), dest)
+    assert precious.exists()
+
+
+def test_install_marker_removed_on_success(payload, tmp_path):
+    release_dir, manifest, _ = payload
+    dest = tmp_path / "Installation"
+    install_from_manifest(manifest, release_dir.as_uri(), dest)
+    assert not (dest / installer_core.INSTALL_MARKER).exists()
+
+
+def test_cancel_during_download_raises_and_keeps_cache(payload, tmp_path):
+    from installer_core import InstallCancelled
+
+    release_dir, manifest, _ = payload
+    dest = tmp_path / "Installation"
+
+    def cancel_on_first_download(kind, info):
+        if kind == "download":
+            raise InstallCancelled("cancelled by test")
+
+    with pytest.raises(InstallCancelled):
+        install_from_manifest(manifest, release_dir.as_uri(), dest,
+                              progress=cancel_on_first_download)
+    # Cache survives cancellation so a retry resumes instead of restarting
+    assert (tmp_path / ".Installation.setup-cache").exists()
 
 
 def test_truncated_volume_rejected(payload, tmp_path):

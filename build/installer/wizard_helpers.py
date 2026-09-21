@@ -109,13 +109,17 @@ def registry_uninstall_data(install_dir: Path, version: str,
                             estimated_size_bytes: int) -> dict:
     """Values written to the HKCU Add/Remove Programs entry."""
     install_dir = Path(install_dir)
+    uninstall_exe = install_dir / "Uninstall.exe"
     return {
         "DisplayName": DISPLAY_NAME,
         "DisplayVersion": version,
         "Publisher": PUBLISHER,
         "InstallLocation": str(install_dir),
         "DisplayIcon": str(install_dir / f"{APP_NAME}.exe"),
-        "UninstallString": str(install_dir / "Uninstall.exe"),
+        # The uninstaller is this same exe; it needs the flag to run in
+        # uninstall mode instead of opening the Setup wizard again.
+        "UninstallString": f'"{uninstall_exe}" --uninstall --install-dir '
+                           f'"{install_dir}"',
         "EstimatedSize": max(1, estimated_size_bytes // 1024),
         "NoModify": 1,
         "NoRepair": 1,
@@ -139,23 +143,39 @@ def remove_uninstall_registry() -> None:
         pass
 
 
+def is_cancellable_event(kind: str) -> bool:
+    """Whether a cancel request must abort on this progress event kind.
+
+    The terminal ``done`` event must never raise: the payload is already
+    fully assembled and the post-install steps still need to run.
+    """
+    return kind != "done"
+
+
 def schedule_self_uninstall(install_dir: Path) -> None:
     """Remove the Installation (and this running uninstaller exe) on exit.
 
     A running exe cannot be deleted, but it can be moved: wait for this
     process to exit, move the exe to %TEMP%, remove the directory, then
-    delete the moved exe.
+    delete the moved exe. Paths travel as environment variables so they
+    never need to be interpolated into the cmd string.
     """
     install_dir = Path(install_dir)
     temp_exe = Path(os.environ.get("TEMP", str(Path.home()))) / \
         f"{APP_NAME}_uninstaller.exe"
-    command = (
-        f'timeout /t 2 /nobreak >nul'
-        f' & move /y "{sys.executable}" "{temp_exe}"'
-        f' & rmdir /s /q "{install_dir}"'
-        f' & del /q "{temp_exe}"'
+    env = dict(
+        os.environ,
+        EHT_UNINST_SELF=str(sys.executable),
+        EHT_UNINST_TMP=str(temp_exe),
+        EHT_UNINST_DIR=str(install_dir),
     )
-    subprocess.Popen(["cmd", "/c", command], shell=False,
+    command = (
+        'timeout /t 2 /nobreak >nul'
+        ' & move /y "%EHT_UNINST_SELF%" "%EHT_UNINST_TMP%"'
+        ' & rmdir /s /q "%EHT_UNINST_DIR%"'
+        ' & del /q "%EHT_UNINST_TMP%"'
+    )
+    subprocess.Popen(["cmd", "/c", command], shell=False, env=env,
                      creationflags=CREATE_NO_WINDOW)
 
 

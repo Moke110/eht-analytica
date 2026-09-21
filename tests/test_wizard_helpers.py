@@ -21,12 +21,22 @@ def test_registry_uninstall_data_shape(tmp_path):
     data = helpers.registry_uninstall_data(tmp_path, "v0.4.0", 5_500_000_000)
     assert data["DisplayName"] == "EHT Analytica"
     assert data["DisplayVersion"] == "v0.4.0"
-    assert data["UninstallString"].endswith("Uninstall.exe")
-    assert data["DisplayIcon"].endswith("EHT_Analytica.exe")
     assert data["InstallLocation"] == str(tmp_path)
+    assert data["DisplayIcon"].endswith("EHT_Analytica.exe")
     # EstimatedSize is in KiB
     assert data["EstimatedSize"] == 5_500_000_000 // 1024
     assert data["NoModify"] == 1 and data["NoRepair"] == 1
+    # Add/Remove Programs must relaunch the uninstaller, not the Setup wizard
+    assert "--uninstall" in data["UninstallString"]
+    assert str(tmp_path) in data["UninstallString"]
+    assert data["UninstallString"].startswith('"')
+
+
+def test_is_cancellable_event():
+    assert helpers.is_cancellable_event("download")
+    assert helpers.is_cancellable_event("extract")
+    # The terminal event must never raise: the install is already complete
+    assert not helpers.is_cancellable_event("done")
 
 
 def test_shortcut_ps_command_quotes_paths():

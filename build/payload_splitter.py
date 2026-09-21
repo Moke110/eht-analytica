@@ -31,10 +31,10 @@ APP_NAME = "EHT_Analytica"
 MANIFEST_SCHEMA = 1
 DEFAULT_MAX_VOLUME_MB = 1900
 # Conservative zip overhead estimates used when planning Volume contents:
-# per-entry local+central headers plus filename, plus the end-of-archive
-# record. Real archives stay under this for typical trees, so the runtime
-# size check below almost never trips.
-ZIP_PER_FILE_OVERHEAD = 200
+# per-entry local+central headers plus the filename (stored twice, hence the
+# 2x factor), plus the end-of-archive record. Real archives stay under this
+# for typical trees, so the runtime size check below almost never trips.
+ZIP_PER_FILE_OVERHEAD = 128
 ZIP_FIXED_OVERHEAD = 128
 
 
@@ -62,8 +62,8 @@ def _plan_volumes(files: list[Path], root: Path,
     single file cannot fit in one Volume.
     """
     def est(f: Path) -> int:
-        return (f.stat().st_size + ZIP_PER_FILE_OVERHEAD
-                + len(f.relative_to(root).as_posix()))
+        rel = f.relative_to(root).as_posix()
+        return f.stat().st_size + ZIP_PER_FILE_OVERHEAD + 2 * len(rel)
 
     ordered = sorted(files, key=lambda p: (-p.stat().st_size,
                                            p.relative_to(root).as_posix()))
@@ -100,9 +100,11 @@ def split_payload(onedir: Path, out_dir: Path, tag: str,
         raise ValueError(f"No files found under {onedir}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Stale volumes from a previous split would corrupt the manifest set
-    for old in out_dir.glob(f"{APP_NAME}-{tag}-payload-*.zip"):
-        old.unlink()
+    # Clear previous release artifacts (any tag) so a reused release
+    # directory cannot leave stale Volumes or Setup exes behind.
+    for old in out_dir.glob(f"{APP_NAME}-*"):
+        if old.is_file():
+            old.unlink()
 
     plan = _plan_volumes(files, onedir, max_volume_bytes)
     volumes_meta = []
@@ -160,6 +162,19 @@ def reassemble_volumes(volume_paths: list[Path], dest: Path) -> None:
             zf.extractall(dest)
 
 
+def _files_equal(a: Path, b: Path, chunk_size: int = 1024 * 1024) -> bool:
+    """Chunked, constant-memory file comparison."""
+    if a.stat().st_size != b.stat().st_size:
+        return False
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            ca, cb = fa.read(chunk_size), fb.read(chunk_size)
+            if ca != cb:
+                return False
+            if not ca:
+                return True
+
+
 def trees_identical(a: Path, b: Path) -> tuple[bool, str]:
     """Byte-for-byte comparison of two directory trees."""
     fa = {p.relative_to(a).as_posix(): p for p in iter_tree_files(a)}
@@ -169,7 +184,7 @@ def trees_identical(a: Path, b: Path) -> tuple[bool, str]:
         only_b = sorted(set(fb) - set(fa))[:5]
         return False, f"file sets differ; only in source: {only_a}, only in dest: {only_b}"
     for rel in sorted(fa):
-        if fa[rel].read_bytes() != fb[rel].read_bytes():
+        if not _files_equal(fa[rel], fb[rel]):
             return False, f"content differs: {rel}"
     return True, ""
 

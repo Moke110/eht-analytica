@@ -257,11 +257,23 @@ class WizardApp:
             self.dir_var.set(chosen)
 
     def _start_install(self) -> None:
+        if not self.manifest.volumes:
+            messagebox.showerror(WINDOW_TITLE,
+                                 "This build has no payload volumes "
+                                 "(corrupt Setup exe).")
+            return
         self.install_dir = Path(self.dir_var.get()).expanduser()
         base_url = self.mirror_var.get().strip()
         if not base_url:
             messagebox.showerror(WINDOW_TITLE, "Download base URL is empty.")
             return
+        # Capture option values on the main thread: tkinter variables must
+        # not be touched from the worker thread.
+        self.opts = {
+            "desktop": bool(self.opt_desktop.get()),
+            "start_menu": bool(self.opt_start_menu.get()),
+            "launch": bool(self.opt_launch.get()),
+        }
         # Cheap up-front disk space check (core re-checks authoritatively)
         largest = max(v.size_bytes for v in self.manifest.volumes)
         required = int((self.manifest.total_bytes + largest) * 1.05)
@@ -282,15 +294,15 @@ class WizardApp:
         self._show_progress()
         self.cancel_requested = False
         self.worker = threading.Thread(
-            target=self._worker, args=(base_url, self.install_dir),
+            target=self._worker, args=(base_url, self.install_dir, self.opts),
             daemon=True)
         self.worker.start()
 
-    def _worker(self, base_url: str, install_dir: Path) -> None:
+    def _worker(self, base_url: str, install_dir: Path, opts: dict) -> None:
         try:
             install_from_manifest(self.manifest, base_url, install_dir,
                                   progress=self._emit, max_attempts=3)
-            self._post_install(install_dir)
+            self._post_install(install_dir, opts)
             self.q.put(("done", {}))
         except InstallCancelled:
             self.q.put(("cancelled", {}))
@@ -299,18 +311,18 @@ class WizardApp:
         except Exception as e:  # defensive: surface unexpected crashes
             self.q.put(("error", {"message": f"{e}\n{traceback.format_exc()}"}))
 
-    def _post_install(self, install_dir: Path) -> None:
+    def _post_install(self, install_dir: Path, opts: dict) -> None:
         """Side effects after assembly: uninstaller, shortcuts, registry."""
         # Uninstaller: copy of this exe (frozen builds only)
         if getattr(sys, "frozen", False):
             shutil.copy2(sys.executable, install_dir / "Uninstall.exe")
         # Shortcuts
         exe = install_dir / f"{helpers.APP_NAME}.exe"
-        if self.opt_desktop.get():
+        if opts["desktop"]:
             helpers.create_shortcut(
                 helpers.desktop_dir() / f"{helpers.DISPLAY_NAME}.lnk",
                 exe, install_dir)
-        if self.opt_start_menu.get():
+        if opts["start_menu"]:
             helpers.create_shortcut(
                 helpers.start_menu_dir() / f"{helpers.DISPLAY_NAME}.lnk",
                 exe, install_dir)
@@ -319,7 +331,7 @@ class WizardApp:
             install_dir, self.manifest.tag, self.manifest.total_bytes))
 
     def _emit(self, kind: str, info: dict) -> None:
-        if self.cancel_requested:
+        if self.cancel_requested and helpers.is_cancellable_event(kind):
             raise InstallCancelled("Cancelled by user")
         self.q.put((kind, info))
 
@@ -361,7 +373,7 @@ class WizardApp:
             self.status_var.set("Cancelling…")
 
     def _finish(self) -> None:
-        if self.opt_launch.get():
+        if getattr(self, "opts", {}).get("launch"):
             try:
                 helpers.launch_app(self.install_dir)
             except Exception:
@@ -399,7 +411,15 @@ def main(argv: list[str] | None = None) -> int:
         m = Manifest.from_dict(json.loads(
             Path(args.manifest).read_text(encoding="utf-8")))
     else:
-        m = load_embedded_manifest()
+        try:
+            m = load_embedded_manifest()
+        except SystemExit as e:
+            # console=False: a traceback would be invisible, so show a dialog
+            err = tk.Tk()
+            err.withdraw()
+            messagebox.showerror(WINDOW_TITLE, str(e))
+            err.destroy()
+            return 1
 
     root = tk.Tk()
     try:

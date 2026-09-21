@@ -70,6 +70,8 @@ def build_installer(tag: str, manifest: dict) -> Path:
     # PyInstaller picks up manifest.json as a data file from the spec dir
     EMBEDDED_MANIFEST.write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
+    if not EMBEDDED_MANIFEST.is_file():
+        raise SystemExit(f"ERROR: failed to write {EMBEDDED_MANIFEST}")
     run([sys.executable, "-m", "PyInstaller",
          str(INSTALLER_DIR / "installer.spec"),
          "--distpath", str(RELEASE),

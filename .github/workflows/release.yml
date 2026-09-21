@@ -17,6 +17,8 @@ jobs:
   build:
     name: Build Windows release
     runs-on: windows-latest
+    # Only real release tags build: a manual dispatch on a branch is a no-op.
+    if: startsWith(github.ref, 'refs/tags/v')
     # The payload includes CUDA PyTorch (~3 GB wheel) plus a full onedir
     # build, Volume split, installer build, and reassembly for verification.
     timeout-minutes: 120
@@ -34,13 +36,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          # Reuse the ~3 GB torch wheel between releases; keep the cache off
-          # the runner's smaller system drive.
+          # Reuse the ~3 GB torch wheel between releases
           enable-cache: true
-          cache-local-path: D:\uv-cache
 
       - name: Install Python dependencies (CUDA torch via lockfile)
         run: uv sync --extra dev
+
+      - name: Run test suite
+        run: uv run pytest -q
 
       - name: Build release artifacts (volumes + Setup exe)
         # Includes verification: reassemble the Volumes into an Installation

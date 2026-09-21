@@ -24,6 +24,9 @@ CHUNK_SIZE = 1024 * 1024
 # Disk headroom on top of (uncompressed total + largest Volume) to survive
 # filesystem overhead during extraction.
 DISK_SLACK_RATIO = 1.05
+# Written into the destination while an install is in progress; lets a retry
+# recognise its own partial output (and is removed on success).
+INSTALL_MARKER = ".eht_analytica_install"
 
 
 class InstallError(Exception):
@@ -89,9 +92,35 @@ def load_manifest(path: Path) -> Manifest:
 def _free_bytes(path: Path) -> int:
     """Free space on the filesystem containing ``path`` (or nearest ancestor)."""
     p = Path(path)
-    while not p.exists():
+    while not p.exists() and p != p.parent:
         p = p.parent
     return shutil.disk_usage(p).free
+
+
+def _prepare_destination(dest_dir: Path) -> None:
+    """Replace an existing Installation wholesale; refuse foreign directories.
+
+    A previous Installation is recognised by its executable or by the
+    in-progress marker left by an interrupted earlier attempt, so retries
+    can continue. Any other non-empty directory is refused rather than
+    wiped — the user must pick an empty or new location.
+    """
+    marker = dest_dir / INSTALL_MARKER
+    if dest_dir.exists():
+        entries = list(dest_dir.iterdir())
+        ours = marker.exists() or (dest_dir / "EHT_Analytica.exe").exists()
+        if entries and not ours:
+            raise InstallError(
+                f"Destination {dest_dir} already exists and is not an EHT "
+                f"Analytica installation. Choose an empty or new directory."
+            )
+        for child in entries:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_text("", encoding="utf-8")
 
 
 def _default_opener() -> urllib.request.OpenerDirector:
@@ -228,6 +257,7 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
     dest_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = dest_dir.parent / f".{dest_dir.name}.setup-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_destination(dest_dir)
 
     extracted_files = 0
     success = False
@@ -285,6 +315,7 @@ def install_from_manifest(manifest: Manifest, base_url: str, dest_dir: Path,
             f"{manifest.total_files}"
         )
 
+    (dest_dir / INSTALL_MARKER).unlink(missing_ok=True)
     if progress:
         progress("done", {"count": total_volumes})
     return dest_dir
