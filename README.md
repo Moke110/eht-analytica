@@ -59,9 +59,7 @@ Each model directory under `model/` contains:
 
 ## Developer Docs
 
-- `CLAUDE.md` — Full project reference (structure, API endpoints, data flow, config)
 - `training/README.md` — Training pipeline setup, annotation tool, adding new models
-- `training/CLAUDE.md` — Training codebase reference for LLM context
 
 ## Packaging
 
